@@ -1,0 +1,160 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: #11182c;
+  --panel-2: #0f1627;
+  --text: #e8eefc;
+  --muted: #9ea8c7;
+  --line: rgba(255, 255, 255, 0.1);
+  --accent: #67d4ff;
+  --accent-2: #8a7dff;
+  --danger: #ff7f9f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(103, 212, 255, 0.12), transparent 35%),
+    linear-gradient(180deg, #09101f 0%, var(--bg) 100%);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  padding: 24px;
+}
+
+.shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.panel,
+.player-card {
+  background: rgba(17, 24, 44, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+}
+
+.panel {
+  padding: 24px;
+}
+
+.player-card {
+  overflow: hidden;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.1;
+}
+
+.form {
+  margin-top: 22px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+input,
+button {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  font: inherit;
+}
+
+input {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--panel-2);
+  color: var(--text);
+  outline: none;
+}
+
+input:focus {
+  border-color: rgba(103, 212, 255, 0.7);
+  box-shadow: 0 0 0 4px rgba(103, 212, 255, 0.12);
+}
+
+button {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #07101f;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.meta {
+  margin-top: 20px;
+  display: grid;
+  gap: 12px;
+}
+
+.meta > div {
+  padding: 12px 14px;
+  background: rgba(15, 22, 39, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+#status.error {
+  color: var(--danger);
+}
+
+#player {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+  background: #000;
+}
+
+@media (max-width: 920px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}
