@@ -6,8 +6,6 @@ export const apiRouter = express.Router();
 const getInput = (req) => String(req.query.input || req.query.id || req.query.url || '').trim();
 
 apiRouter.get('/internal/googlevideo', async (req, res) => {
-  noStore(res);
-
   try {
     const input = getInput(req);
     if (!input) {
@@ -25,8 +23,6 @@ apiRouter.get('/internal/googlevideo', async (req, res) => {
 });
 
 apiRouter.get('/stream', async (req, res) => {
-  noStore(res);
-
   try {
     const input = getInput(req);
     if (!input) {
@@ -43,8 +39,6 @@ apiRouter.get('/stream', async (req, res) => {
 });
 
 apiRouter.get('/play-url', async (req, res) => {
-  noStore(res);
-
   try {
     const input = getInput(req);
     if (!input) {
