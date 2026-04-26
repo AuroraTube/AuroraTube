@@ -1,151 +1,216 @@
-const form = document.getElementById('stream-form');
-const input = document.getElementById('stream-input');
-const player = document.getElementById('player');
-const statusNode = document.getElementById('status');
-const titleNode = document.getElementById('title');
-const sourceNode = document.getElementById('source');
-const submitButton = form.querySelector('button[type="submit"]');
-const finalUrlNode = document.getElementById('final-url');
+import { api } from './lib/api.js';
+import { navigate, onInternalLink, currentUrl } from './lib/router.js';
+import { escapeHtml } from './lib/format.js';
+import { homePage, searchPage, watchPage, channelPage, notFoundPage, commentCard, videoCard } from './pages.js';
 
-const youtubeIdPattern = /^[a-zA-Z0-9_-]{11}$/;
+const app = document.getElementById('app');
 
-const setStatus = (message, kind = '') => {
-  statusNode.textContent = message;
-  statusNode.classList.toggle('error', kind === 'error');
+const state = {
+  searchAbort: null,
+  searchTimer: 0,
 };
 
-const isHttpUrl = (value) => {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
+const locale = navigator.language || 'ja-JP';
+const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
+
+const readSearchParams = () => currentUrl().searchParams;
+
+const buildSearchUrl = (params = {}) => {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    search.set(key, String(value));
   }
+  const query = search.toString();
+  return query ? `/search?${query}` : '/search';
 };
 
-const extractYouTubeVideoId = (value) => {
-  const text = String(value || '').trim();
-  if (!text) return null;
-  if (youtubeIdPattern.test(text)) return text;
-  const normalized = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+const bindSearchForms = () => {
+  const form = document.getElementById('search-form');
+  if (!form) return;
 
-  try {
-    const url = new URL(normalized);
-    const host = url.hostname.replace(/^www\./i, '').toLowerCase();
-    const segments = url.pathname.split('/').filter(Boolean);
+  const input = form.querySelector('input[name="q"]');
+  const box = document.getElementById('search-suggestions');
+  if (!input || !box) return;
 
-    if (host === 'youtu.be') {
-      return youtubeIdPattern.test(segments[0] || '') ? segments[0] : null;
-    }
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    navigate(buildSearchUrl({ q: input.value.trim() }));
+  });
 
-    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
-      const id = url.searchParams.get('v');
-      if (youtubeIdPattern.test(id || '')) return id;
-
-      const index = segments.findIndex((segment) => ['shorts', 'embed', 'live', 'v'].includes(segment));
-      if (index >= 0 && youtubeIdPattern.test(segments[index + 1] || '')) {
-        return segments[index + 1];
+  input.addEventListener('input', () => {
+    clearTimeout(state.searchTimer);
+    state.searchTimer = window.setTimeout(async () => {
+      const value = input.value.trim();
+      if (value.length < 2) {
+        box.hidden = true;
+        box.innerHTML = '';
+        return;
       }
-    }
-  } catch {
-    return null;
-  }
 
-  return null;
+      state.searchAbort?.abort?.();
+      state.searchAbort = new AbortController();
+
+      try {
+        const payload = await api.suggestions(value, state.searchAbort.signal);
+        const suggestions = Array.isArray(payload.suggestions) ? payload.suggestions : [];
+        if (!suggestions.length) {
+          box.hidden = true;
+          box.innerHTML = '';
+          return;
+        }
+        box.innerHTML = suggestions.slice(0, 8).map((item) => `<button type="button" class="suggestion-item" data-suggestion="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join('');
+        box.hidden = false;
+      } catch {
+        box.hidden = true;
+      }
+    }, 180);
+  });
+
+  box.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-suggestion]');
+    if (!button) return;
+    const value = button.getAttribute('data-suggestion') || '';
+    navigate(buildSearchUrl({ q: value }));
+  });
 };
 
-const resetPlayer = () => {
-  player.pause();
-  player.removeAttribute('src');
-  player.load();
+const bindFilterForms = () => {
+  const filterForm = document.getElementById('filter-form');
+  if (!filterForm) return;
+
+  filterForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(filterForm);
+    navigate(buildSearchUrl({
+      q: data.get('q') || '',
+      type: data.get('type') || '',
+      sort: data.get('sort') || '',
+      date: data.get('date') || '',
+      duration: data.get('duration') || '',
+      features: data.get('features') || '',
+    }));
+  });
 };
 
-const loadPlayback = async (payload) => {
-  const playbackUrl = payload.url;
-  if (!playbackUrl) {
-    throw new Error('url not available');
-  }
+const setCommentButtonState = (button, label, disabled = false) => {
+  button.disabled = disabled;
+  button.textContent = label;
+};
 
-  resetPlayer();
-  player.src = playbackUrl;
-  player.load();
+const appendComments = async (button) => {
+  const videoId = button.getAttribute('data-video-id') || '';
+  const continuation = button.getAttribute('data-load-comments') || '';
+  const instance = button.getAttribute('data-comments-instance') || '';
+  if (!videoId || !continuation) return;
 
-  titleNode.textContent = payload.title || '-';
-  sourceNode.textContent = `${payload.provider || 'unknown'} / ${payload.kind || 'unknown'}`;
-  finalUrlNode.textContent = playbackUrl;
-  setStatus('stream loaded');
+  setCommentButtonState(button, '読み込み中…', true);
 
   try {
-    await player.play();
-  } catch {
-    // Browser policy may block autoplay.
-  }
-};
-
-const resolveFinalUrl = async (videoId) => {
-  setStatus('resolving final url...');
-  submitButton.disabled = true;
-
-  try {
-    const response = await fetch(`/api/play-url?input=${encodeURIComponent(videoId)}`, {
-      headers: { accept: 'application/json' },
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
+    const payload = await api.watchComments(videoId, continuation, instance);
+    const container = document.querySelector('[data-comments]');
+    const count = document.querySelector('[data-comment-count]');
+    if (container && Array.isArray(payload.comments)) {
+      container.insertAdjacentHTML('beforeend', payload.comments.map((comment) => commentCard(comment)).join(''));
     }
-
-    await loadPlayback(payload);
-  } finally {
-    submitButton.disabled = false;
-  }
-};
-
-const loadDirectUrl = async (url) => {
-  resetPlayer();
-  player.src = url;
-  player.load();
-  try {
-    await player.play();
-  } catch {
-    // Autoplay is intentionally not forced.
-  }
-
-  titleNode.textContent = '-';
-  sourceNode.textContent = 'direct url';
-  finalUrlNode.textContent = url;
-  setStatus('direct url loaded');
-};
-
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-
-  const value = input.value.trim();
-  if (!value) {
-    setStatus('URL を入力してください', 'error');
-    return;
-  }
-
-  const videoId = extractYouTubeVideoId(value);
-
-  try {
-    if (videoId) {
-      await resolveFinalUrl(videoId);
-      return;
-    }
-
-    if (isHttpUrl(value)) {
-      await loadDirectUrl(value);
-      return;
-    }
-
-    throw new Error('YouTube URL / 11文字ID のいずれかを入力してください');
+    if (count) count.textContent = `${new Intl.NumberFormat(locale).format(Number(payload.commentCount || 0))} 件`;
+    button.remove();
   } catch (error) {
-    setStatus(error?.message || 'load failed', 'error');
-    titleNode.textContent = '-';
-    sourceNode.textContent = '-';
-    finalUrlNode.textContent = '-';
-    resetPlayer();
+    setCommentButtonState(button, error?.message || '失敗しました', false);
   }
-});
+};
+
+const appendChannelVideos = async (button) => {
+  const channelId = button.getAttribute('data-channel-id') || '';
+  const continuation = button.getAttribute('data-load-channel') || '';
+  const sortBy = button.getAttribute('data-sort-by') || 'newest';
+  if (!channelId || !continuation) return;
+
+  setCommentButtonState(button, '読み込み中…', true);
+
+  try {
+    const payload = await api.channel(channelId, { continuation, sortBy });
+    const grid = document.querySelector('[data-channel-grid]');
+    if (grid && Array.isArray(payload.videos)) {
+      grid.insertAdjacentHTML('beforeend', payload.videos.map((item) => videoCard(item)).join(''));
+    }
+    button.remove();
+  } catch (error) {
+    setCommentButtonState(button, error?.message || '失敗しました', false);
+  }
+};
+
+const bindDynamicButtons = () => {
+  document.addEventListener('click', async (event) => {
+    if (onInternalLink(event)) return;
+
+    const commentButton = event.target.closest?.('[data-load-comments]');
+    if (commentButton) {
+      await appendComments(commentButton);
+      return;
+    }
+
+    const channelButton = event.target.closest?.('[data-load-channel]');
+    if (channelButton) {
+      await appendChannelVideos(channelButton);
+    }
+  });
+};
+
+const render = async () => {
+  const url = currentUrl();
+  const path = url.pathname;
+  const query = readSearchParams();
+  const q = String(query.get('q') || '').trim();
+  const videoId = String(query.get('v') || '').trim();
+
+  try {
+    let page;
+    if (path === '/' || path === '') {
+      const trending = await api.trending('default', defaultRegion);
+      page = homePage(trending.items || [], defaultRegion);
+    } else if (path === '/watch' && videoId) {
+      page = watchPage(await api.watch(videoId));
+    } else if (path === '/search') {
+      if (!q) {
+        const trending = await api.trending('default', defaultRegion);
+        page = homePage(trending.items || [], defaultRegion);
+      } else {
+        const filters = {
+          type: query.get('type') || 'all',
+          sort: query.get('sort') || 'relevance',
+          date: query.get('date') || '',
+          duration: query.get('duration') || '',
+          features: query.get('features') || '',
+        };
+        const payload = await api.search(q, filters);
+        page = searchPage(payload.query || q, payload.filters || filters, payload.items || []);
+      }
+    } else if (path.startsWith('/channel/')) {
+      const id = decodeURIComponent(path.replace('/channel/', ''));
+      const sortBy = String(query.get('sortBy') || 'newest');
+      page = channelPage({ ...(await api.channel(id, { sortBy })), sortBy });
+    } else {
+      page = notFoundPage();
+    }
+
+    app.innerHTML = page.html;
+    document.title = page.title || 'AuroraTube';
+  } catch (error) {
+    app.innerHTML = `
+      <div class="empty large error-state">
+        <strong>${escapeHtml(error?.message || '読み込みに失敗しました')}</strong>
+        <span>${escapeHtml(String(error?.details || ''))}</span>
+      </div>
+    `;
+    document.title = 'AuroraTube';
+  }
+
+  bindSearchForms();
+  bindFilterForms();
+};
+
+window.addEventListener('popstate', render);
+window.addEventListener('app:navigate', render);
+bindDynamicButtons();
+render();

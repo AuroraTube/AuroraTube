@@ -7,23 +7,23 @@ export const createApp = () => {
   const app = express();
 
   app.disable('x-powered-by');
-  app.use((req, res, next) => {
+  app.set('trust proxy', true);
+
+  app.use((_req, res, next) => {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
     next();
   });
-  app.use(express.json({ limit: '1kb' }));
-  app.use(express.urlencoded({ extended: false, limit: '1kb' }));
+
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
   app.use('/api', apiRouter);
-  app.use(
-    express.static(config.publicDir, {
-      extensions: ['html'],
-      maxAge: '1h',
-      immutable: false,
-      index: 'index.html',
-    })
-  );
+  app.use(express.static(config.publicDir, { extensions: ['html'], index: false, maxAge: '1h' }));
 
-  app.get('/', (_req, res) => {
+  app.get(['/', '/watch', '/search', '/channel', '/channel/:slug', '/watch/:slug', '/search/:slug'], (_req, res) => {
     res.sendFile(path.join(config.publicDir, 'index.html'));
   });
 

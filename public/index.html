@@ -3,37 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Stream Preview</title>
+    <meta name="theme-color" content="#0f0f0f" />
+    <meta name="description" content="AuroraTube — YouTube 代替フロントエンド" />
+    <title>AuroraTube</title>
     <link rel="stylesheet" href="/styles.css" />
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <main class="shell">
-      <section class="panel">
-        <div>
-          <p class="eyebrow">Static Player</p>
-          <h1>YouTube</h1>
-        </div>
-
-        <form id="stream-form" class="form" autocomplete="off">
-          <label for="stream-input">URL / video id</label>
-          <div class="input-row">
-            <input id="stream-input" name="stream-input" type="text" placeholder="https://... / youtube url / 11文字ID" spellcheck="false" />
-            <button type="submit">Load</button>
-          </div>
-        </form>
-
-        <div class="meta" aria-live="polite">
-          <div><span class="label">Status</span><span id="status">待機中</span></div>
-          <div><span class="label">Title</span><span id="title">-</span></div>
-          <div><span class="label">Source</span><span id="source">-</span></div>
-          <div><span class="label">Final URL</span><span id="final-url">-</span></div>
-        </div>
-      </section>
-
-      <section class="player-card">
-        <video id="player" controls playsinline preload="metadata"></video>
-      </section>
-    </main>
+    <div id="app"></div>
   </body>
 </html>

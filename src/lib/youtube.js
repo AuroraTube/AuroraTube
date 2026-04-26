@@ -1,15 +1,19 @@
 import { youtubeIdPattern } from '../config.js';
 
-const idFromPathSegments = (segments) => {
-  for (let i = 0; i < segments.length; i += 1) {
-    const segment = segments[i];
-    if (segment === 'shorts' || segment === 'embed' || segment === 'live' || segment === 'v') {
-      const candidate = segments[i + 1];
+const channelHandlePattern = /^@?[a-zA-Z0-9._-]{2,}$/;
+
+const extractFromSegments = (segments) => {
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (['shorts', 'embed', 'live', 'v'].includes(segment)) {
+      const candidate = segments[index + 1];
       if (youtubeIdPattern.test(candidate || '')) return candidate;
     }
   }
   return null;
 };
+
+export const safeVideoId = (value) => (youtubeIdPattern.test(String(value || '')) ? String(value) : null);
 
 export const extractYouTubeVideoId = (input) => {
   const text = String(input ?? '').trim();
@@ -17,7 +21,6 @@ export const extractYouTubeVideoId = (input) => {
   if (youtubeIdPattern.test(text)) return text;
 
   const normalized = /^https?:\/\//i.test(text) ? text : `https://${text}`;
-
   let url;
   try {
     url = new URL(normalized);
@@ -26,28 +29,50 @@ export const extractYouTubeVideoId = (input) => {
   }
 
   const host = url.hostname.replace(/^www\./i, '').toLowerCase();
-  const pathnameSegments = url.pathname.split('/').filter(Boolean);
+  const segments = url.pathname.split('/').filter(Boolean);
 
   if (host === 'youtu.be') {
-    const candidate = pathnameSegments[0];
+    const candidate = segments[0];
     return youtubeIdPattern.test(candidate || '') ? candidate : null;
   }
 
   if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
     const searchId = url.searchParams.get('v');
     if (youtubeIdPattern.test(searchId || '')) return searchId;
-
-    const pathId = idFromPathSegments(pathnameSegments);
+    const pathId = extractFromSegments(segments);
     if (pathId) return pathId;
   }
 
   return null;
 };
 
-export const isHttpUrl = (value) => {
-  if (!isNonEmptyString(value)) return false;
+export const extractChannelHandle = (input) => {
+  const text = String(input ?? '').trim();
+  if (!text) return null;
+
+  if (text.startsWith('@') && channelHandlePattern.test(text)) return text;
+
+  const normalized = /^https?:\/\//i.test(text) ? text : `https://${text}`;
   try {
-    const url = new URL(value);
+    const url = new URL(normalized);
+    const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+    const segments = url.pathname.split('/').filter(Boolean);
+
+    if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
+      if (segments[0] === 'channel' && segments[1]) return segments[1];
+      if (segments[0] === 'c' && segments[1]) return segments[1];
+      if (segments[0]?.startsWith('@')) return segments[0];
+    }
+  } catch {
+    return null;
+  }
+
+  return channelHandlePattern.test(text) ? (text.startsWith('@') ? text : `@${text}`) : null;
+};
+
+export const isHttpUrl = (value) => {
+  try {
+    const url = new URL(String(value || '').trim());
     return url.protocol === 'http:' || url.protocol === 'https:';
   } catch {
     return false;
