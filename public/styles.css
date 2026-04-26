@@ -379,6 +379,7 @@ button:disabled { cursor: default; opacity: 1; }
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
   line-height: 1.35;
   font-weight: 700;
@@ -392,8 +393,9 @@ button:disabled { cursor: default; opacity: 1; }
 }
 .channel-link {
   display: -webkit-box;
-  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   overflow: hidden;
   margin-top: 6px;
 }
@@ -410,6 +412,7 @@ button:disabled { cursor: default; opacity: 1; }
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   overflow: hidden;
 }
 
