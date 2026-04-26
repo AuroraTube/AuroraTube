@@ -6,6 +6,7 @@ import { isNonEmptyString, isPlainObject } from '../lib/strings.js';
 import { extractYouTubeVideoId } from '../lib/youtube.js';
 import { getCommentsFromInstance, fetchFromAny } from '../providers/invidious.js';
 import { fetchYtDlpJson } from '../providers/ytdlp.js';
+import { proxyMediaStream } from './mediaProxy.js';
 
 const normalizeComment = (comment = {}) => ({
   commentId: String(comment.commentId || ''),
@@ -36,8 +37,6 @@ const normalizeComment = (comment = {}) => ({
       }
     : null,
 });
-
-const sanitizeUrl = (value) => String(value || '').replace(/[\r\n]/g, '').trim();
 
 const firstAvailableUrl = (video) => {
   const formats = Array.isArray(video?.formats) ? video.formats : [];
@@ -158,8 +157,8 @@ const getInvidiousVideo = async (videoId) => {
 export const resolveVideoContext = async (videoId) => {
   const proxy = String(process.env.YTDLP_PROXY || '').trim();
   const attempts = [
-    async () => getYtDlpVideo(videoId, proxy),
     async () => getInvidiousVideo(videoId),
+    async () => getYtDlpVideo(videoId, proxy),
     async () => getYtDlpVideo(videoId, ''),
   ];
 
@@ -269,7 +268,10 @@ export const fetchVideoComments = async (videoId, continuation = '', instance = 
   };
 };
 
-export const streamVideo = async (res, videoId) => {
+const streamSingleInput = async (res, url, outputOptions = []) =>
+  streamWithFfmpeg(res, [url], ['-map', '0:v:0', '-map', '0:a:0?', ...outputOptions]);
+
+export const streamVideo = async (req, res, videoId) => {
   const context = await resolveVideoContext(videoId);
   const source = chooseBestPlayback(context.video);
 
@@ -278,8 +280,7 @@ export const streamVideo = async (res, videoId) => {
   res.setHeader('Cache-Control', 'no-store');
 
   if (source.kind === 'direct' && source.url) {
-    res.status(302).setHeader('Location', sanitizeUrl(source.url));
-    res.end();
+    await proxyMediaStream(res, source.url, { range: String(req.headers.range || '') });
     return;
   }
 
@@ -295,13 +296,15 @@ export const streamVideo = async (res, videoId) => {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
-    await streamWithFfmpeg(res, [source.url], ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    await streamSingleInput(res, source.url, ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
 
   if (source.kind === 'dashManifest' && source.url) {
-    res.status(302).setHeader('Location', sanitizeUrl(source.url));
-    res.end();
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    await streamSingleInput(res, source.url, ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
 

@@ -10,8 +10,25 @@ const toQuery = (params = {}) => {
   return query ? `?${query}` : '';
 };
 
-export const fetchJson = async (url, { cacheKey = url, signal } = {}) => {
-  if (cache.has(cacheKey)) return cache.get(cacheKey);
+const getCached = (cacheKey) => {
+  const entry = cache.get(cacheKey);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(cacheKey);
+    return null;
+  }
+  return entry.value;
+};
+
+const setCached = (cacheKey, value, ttlMs) => {
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return;
+  cache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
+};
+
+export const fetchJson = async (url, { cacheKey = url, signal, ttlMs = 0 } = {}) => {
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+
   const response = await fetch(url, { headers: { accept: 'application/json' }, signal });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -20,7 +37,7 @@ export const fetchJson = async (url, { cacheKey = url, signal } = {}) => {
     error.details = payload.details;
     throw error;
   }
-  cache.set(cacheKey, payload);
+  setCached(cacheKey, payload, ttlMs);
   return payload;
 };
 
@@ -31,11 +48,11 @@ export const api = {
   },
   suggestions: (query, signal) => {
     const url = `/api/search/suggestions${toQuery({ q: query })}`;
-    return fetchJson(url, { cacheKey: url, signal });
+    return fetchJson(url, { cacheKey: url, signal, ttlMs: 5 * 60 * 1000 });
   },
   trending: (type = 'default', region = '') => {
     const url = `/api/trending${toQuery({ type, region })}`;
-    return fetchJson(url, { cacheKey: url });
+    return fetchJson(url, { cacheKey: url, ttlMs: 2 * 60 * 1000 });
   },
   watch: (id) => {
     const url = `/api/watch/${encodeURIComponent(id)}`;
@@ -49,4 +66,5 @@ export const api = {
     const url = `/api/channel${toQuery({ id, ...params })}`;
     return fetchJson(url, { cacheKey: url });
   },
+  thumbnail: (url) => `/api/thumbnail${toQuery({ url })}`,
 };

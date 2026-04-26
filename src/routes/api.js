@@ -2,6 +2,7 @@ import express from 'express';
 import { badRequest, HttpError } from '../lib/httpError.js';
 import { fetchChannelPage } from '../services/channelService.js';
 import { fetchSearchPage, fetchSearchSuggestions, fetchTrendingPage } from '../services/searchService.js';
+import { streamThumbnail } from '../services/thumbnailService.js';
 import { fetchVideoComments, fetchVideoPage, streamVideo } from '../services/videoService.js';
 
 export const apiRouter = express.Router();
@@ -58,7 +59,11 @@ apiRouter.get('/watch/:id/comments', asyncHandler(async (req, res) => {
 }));
 
 apiRouter.get('/watch/:id/stream', asyncHandler(async (req, res) => {
-  await streamVideo(res, String(req.params.id || '').trim());
+  await streamVideo(req, res, String(req.params.id || '').trim());
+}));
+
+apiRouter.get('/thumbnail', asyncHandler(async (req, res) => {
+  await streamThumbnail(res, String(req.query.url || '').trim());
 }));
 
 apiRouter.get('/channel', asyncHandler(async (req, res) => {

@@ -1,13 +1,16 @@
 import { api } from './lib/api.js';
 import { navigate, onInternalLink, currentUrl } from './lib/router.js';
 import { escapeHtml } from './lib/format.js';
-import { homePage, searchPage, watchPage, channelPage, notFoundPage, commentCard, videoCard } from './pages.js';
+import { commentCard, videoCard } from './lib/cards.js';
+import { homePage, searchPage, watchPage, channelPage, notFoundPage } from './pages.js';
+import { setLoadingState } from './lib/ui.js';
 
 const app = document.getElementById('app');
 
 const state = {
   searchAbort: null,
   searchTimer: 0,
+  renderToken: 0,
 };
 
 const locale = navigator.language || 'ja-JP';
@@ -25,7 +28,7 @@ const buildSearchUrl = (params = {}) => {
   return query ? `/search?${query}` : '/search';
 };
 
-const bindSearchForms = () => {
+const bindSearchForm = () => {
   const form = document.getElementById('search-form');
   if (!form) return;
 
@@ -75,25 +78,7 @@ const bindSearchForms = () => {
   });
 };
 
-const bindFilterForms = () => {
-  const filterForm = document.getElementById('filter-form');
-  if (!filterForm) return;
-
-  filterForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const data = new FormData(filterForm);
-    navigate(buildSearchUrl({
-      q: data.get('q') || '',
-      type: data.get('type') || '',
-      sort: data.get('sort') || '',
-      date: data.get('date') || '',
-      duration: data.get('duration') || '',
-      features: data.get('features') || '',
-    }));
-  });
-};
-
-const setCommentButtonState = (button, label, disabled = false) => {
+const setButtonState = (button, label, disabled = false) => {
   button.disabled = disabled;
   button.textContent = label;
 };
@@ -104,7 +89,7 @@ const appendComments = async (button) => {
   const instance = button.getAttribute('data-comments-instance') || '';
   if (!videoId || !continuation) return;
 
-  setCommentButtonState(button, '読み込み中…', true);
+  setButtonState(button, '読み込み中…', true);
 
   try {
     const payload = await api.watchComments(videoId, continuation, instance);
@@ -116,7 +101,7 @@ const appendComments = async (button) => {
     if (count) count.textContent = `${new Intl.NumberFormat(locale).format(Number(payload.commentCount || 0))} 件`;
     button.remove();
   } catch (error) {
-    setCommentButtonState(button, error?.message || '失敗しました', false);
+    setButtonState(button, error?.message || '失敗しました', false);
   }
 };
 
@@ -126,7 +111,7 @@ const appendChannelVideos = async (button) => {
   const sortBy = button.getAttribute('data-sort-by') || 'newest';
   if (!channelId || !continuation) return;
 
-  setCommentButtonState(button, '読み込み中…', true);
+  setButtonState(button, '読み込み中…', true);
 
   try {
     const payload = await api.channel(channelId, { continuation, sortBy });
@@ -136,7 +121,7 @@ const appendChannelVideos = async (button) => {
     }
     button.remove();
   } catch (error) {
-    setCommentButtonState(button, error?.message || '失敗しました', false);
+    setButtonState(button, error?.message || '失敗しました', false);
   }
 };
 
@@ -158,6 +143,9 @@ const bindDynamicButtons = () => {
 };
 
 const render = async () => {
+  const token = ++state.renderToken;
+  setLoadingState(true);
+
   const url = currentUrl();
   const path = url.pathname;
   const query = readSearchParams();
@@ -194,9 +182,12 @@ const render = async () => {
       page = notFoundPage();
     }
 
+    if (token !== state.renderToken) return;
     app.innerHTML = page.html;
     document.title = page.title || 'AuroraTube';
+    window.scrollTo(0, 0);
   } catch (error) {
+    if (token !== state.renderToken) return;
     app.innerHTML = `
       <div class="empty large error-state">
         <strong>${escapeHtml(error?.message || '読み込みに失敗しました')}</strong>
@@ -204,10 +195,12 @@ const render = async () => {
       </div>
     `;
     document.title = 'AuroraTube';
+  } finally {
+    if (token === state.renderToken) {
+      setLoadingState(false);
+      bindSearchForm();
+    }
   }
-
-  bindSearchForms();
-  bindFilterForms();
 };
 
 window.addEventListener('popstate', render);
