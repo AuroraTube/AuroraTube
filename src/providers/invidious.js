@@ -60,7 +60,6 @@ export const fetchJsonFromInstance = async (instance, path, query = {}, options 
       signal: controller.signal,
       headers: {
         accept: 'application/json',
-        'user-agent': 'AuroraTube/3.2',
       },
     });
 

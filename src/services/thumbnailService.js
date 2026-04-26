@@ -37,7 +37,6 @@ export const streamThumbnail = async (res, inputUrl) => {
         redirect: 'manual',
         headers: {
           accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
-          'user-agent': 'AuroraTube/3.2',
         },
       });
 

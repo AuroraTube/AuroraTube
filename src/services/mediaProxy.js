@@ -30,7 +30,6 @@ const fetchUpstream = async (inputUrl, { range = '', timeoutMs = config.requestT
         redirect: 'manual',
         headers: {
           accept: 'video/*,audio/*;q=0.9,*/*;q=0.1',
-          'user-agent': 'AuroraTube/4.0',
           ...(range ? { range } : {}),
         },
       });
