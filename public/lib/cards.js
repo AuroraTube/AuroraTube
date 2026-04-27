@@ -13,6 +13,20 @@ const bestThumb = (item) =>
 
 const proxiedSrc = (url) => thumbnailUrl(url);
 
+export const isShortVideo = (item) => {
+  const length = Number(item?.lengthSeconds || 0);
+  return Number.isFinite(length) && length > 0 && length <= 60;
+};
+
+const videoHref = (item, variant = 'grid') => {
+  if (!item?.videoId) return '#';
+  const id = encodeURIComponent(item.videoId);
+  if (variant === 'short' || isShortVideo(item)) {
+    return `/shorts/${id}`;
+  }
+  return `/watch/${id}`;
+};
+
 export const avatar = (thumbnails = [], fallback = '◉') => {
   const thumb = thumbnails?.[0]?.url || '';
   return thumb
@@ -30,12 +44,13 @@ export const videoCard = (item, variant = 'grid') => {
   const thumb = bestThumb(item);
   const duration = formatDuration(item.lengthSeconds);
   const live = item.liveNow ? '<span class="badge live">LIVE</span>' : '';
-  const url = item.videoId ? `/watch?v=${encodeURIComponent(item.videoId)}` : '#';
+  const url = videoHref(item, variant);
+  const short = variant === 'short' || isShortVideo(item);
   const thumbImg = thumb ? `<img src="${escapeHtml(proxiedSrc(thumb))}" alt="${escapeHtml(item.title || '')}" loading="lazy" referrerpolicy="no-referrer" />` : '';
   const meta = metaLine(item);
 
   return `
-    <article class="video-card ${variant === 'row' ? 'video-card-row' : 'video-card-grid'}">
+    <article class="video-card ${short ? 'short-card' : variant === 'row' ? 'video-card-row' : 'video-card-grid'}">
       <a class="thumb" href="${url}">
         ${thumbImg}
         ${duration ? `<span class="duration">${escapeHtml(duration)}</span>` : ''}

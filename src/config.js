@@ -10,24 +10,16 @@ const parsePositiveInt = (value, fallback) => {
   return Number.isInteger(number) && number > 0 ? number : fallback;
 };
 
-const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
-
-const splitList = (value) =>
-  String(value || '')
-    .split(',')
-    .map((entry) => normalizeBaseUrl(entry))
-    .filter(Boolean);
-
 export const config = {
   appName: 'AuroraTube',
   port: parsePositiveInt(process.env.PORT, 3000),
-  requestTimeoutMs: parsePositiveInt(process.env.REQUEST_TIMEOUT_MS, 8000),
-  region: String(process.env.INVIDIOUS_REGION || 'US').trim().toUpperCase() || 'US',
-  hl: String(process.env.INVIDIOUS_HL || 'ja').trim() || 'ja',
+  ytdlpProxy: String(process.env.PROXY_URL || '').trim(),
+  requestTimeoutMs: 8000,
+  region: 'US',
+  hl: 'ja',
   publicDir: path.join(rootDir, 'public'),
   rootDir,
-  invidiousInstances:
-  [
+  invidiousInstances: [
     'https://inv.nadeko.net',
     'https://invidious.f5.si',
     'https://invidious.lunivers.trade',

@@ -50,7 +50,7 @@ const fetchUpstream = async (inputUrl, { range = '', timeoutMs = config.requestT
   throw new Error('too many redirects');
 };
 
-export const proxyMediaStream = async (res, inputUrl, { range = '' } = {}) => {
+export const proxyMediaStream = async (res, inputUrl, { range = '', contentDisposition = '' } = {}) => {
   const response = await fetchUpstream(inputUrl, { range });
 
   if (![200, 206].includes(response.status)) {
@@ -61,6 +61,9 @@ export const proxyMediaStream = async (res, inputUrl, { range = '' } = {}) => {
   for (const header of COPY_HEADERS) {
     const value = response.headers.get(header);
     if (value) res.setHeader(header, value);
+  }
+  if (contentDisposition) {
+    res.setHeader('Content-Disposition', contentDisposition);
   }
   res.setHeader('Cache-Control', 'no-store');
 

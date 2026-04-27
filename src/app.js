@@ -23,7 +23,7 @@ export const createApp = () => {
   app.use('/api', apiRouter);
   app.use(express.static(config.publicDir, { extensions: ['html'], index: false, maxAge: '1h' }));
 
-  app.get(['/', '/watch', '/search', '/channel', '/channel/:slug', '/watch/:slug', '/search/:slug'], (_req, res) => {
+  app.get(['/', '/trending', '/search', '/watch/:slug', '/shorts/:slug', '/channel/:slug'], (_req, res) => {
     res.sendFile(path.join(config.publicDir, 'index.html'));
   });
 

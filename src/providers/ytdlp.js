@@ -9,27 +9,6 @@ const DEFAULT_COMMANDS = [
   { command: 'python', args: ['-m', 'yt_dlp'] },
 ];
 
-const splitCommands = (value) =>
-  String(value || '')
-    .split(/[\n,]/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const [command, ...args] = entry.split(/\s+/).filter(Boolean);
-      return command ? { command, args } : null;
-    })
-    .filter(Boolean);
-
-const commandCandidates = () => {
-  const custom = splitCommands(process.env.YTDLP_COMMANDS);
-  if (custom.length) return custom;
-
-  const single = String(process.env.YTDLP_COMMAND || '').trim();
-  if (single) return [{ command: single, args: [] }];
-
-  return DEFAULT_COMMANDS;
-};
-
 const normalizeInput = (input) => {
   const value = String(input || '').trim();
   if (!value) return value;
@@ -56,7 +35,7 @@ export const fetchYtDlpJson = async (input, { proxy = '', timeoutMs = config.req
   const args = buildArgs(input, { proxy });
   const errors = [];
 
-  for (const candidate of commandCandidates()) {
+  for (const candidate of DEFAULT_COMMANDS) {
     try {
       const { stdout } = await runCommand({
         command: candidate.command,

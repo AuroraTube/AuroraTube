@@ -2,8 +2,9 @@ import { api } from './lib/api.js';
 import { navigate, onInternalLink, currentUrl } from './lib/router.js';
 import { escapeHtml } from './lib/format.js';
 import { commentCard, videoCard } from './lib/cards.js';
-import { homePage, searchPage, watchPage, channelPage, notFoundPage } from './pages.js';
+import { homePage, searchPage, shortsPage, trendingPage, watchPage, channelPage, notFoundPage } from './pages.js';
 import { setLoadingState } from './lib/ui.js';
+import { bindPlayers } from './lib/player.js';
 
 const app = document.getElementById('app');
 
@@ -86,19 +87,16 @@ const setButtonState = (button, label, disabled = false) => {
 const appendComments = async (button) => {
   const videoId = button.getAttribute('data-video-id') || '';
   const continuation = button.getAttribute('data-load-comments') || '';
-  const instance = button.getAttribute('data-comments-instance') || '';
   if (!videoId || !continuation) return;
 
   setButtonState(button, '読み込み中…', true);
 
   try {
-    const payload = await api.watchComments(videoId, continuation, instance);
+    const payload = await api.watchComments(videoId, continuation);
     const container = document.querySelector('[data-comments]');
-    const count = document.querySelector('[data-comment-count]');
     if (container && Array.isArray(payload.comments)) {
       container.insertAdjacentHTML('beforeend', payload.comments.map((comment) => commentCard(comment)).join(''));
     }
-    if (count) count.textContent = `${new Intl.NumberFormat(locale).format(Number(payload.commentCount || 0))} 件`;
     button.remove();
   } catch (error) {
     setButtonState(button, error?.message || '失敗しました', false);
@@ -149,20 +147,20 @@ const render = async () => {
   const url = currentUrl();
   const path = url.pathname;
   const query = readSearchParams();
-  const q = String(query.get('q') || '').trim();
-  const videoId = String(query.get('v') || '').trim();
 
   try {
     let page;
     if (path === '/' || path === '') {
       const trending = await api.trending('default', defaultRegion);
       page = homePage(trending.items || [], defaultRegion);
-    } else if (path === '/watch' && videoId) {
-      page = watchPage(await api.watch(videoId));
+    } else if (path === '/trending') {
+      const trending = await api.trending('default', defaultRegion);
+      page = trendingPage(trending.items || [], defaultRegion);
     } else if (path === '/search') {
+      const q = String(query.get('q') || '').trim();
       if (!q) {
         const trending = await api.trending('default', defaultRegion);
-        page = homePage(trending.items || [], defaultRegion);
+        page = trendingPage(trending.items || [], defaultRegion);
       } else {
         const filters = {
           type: query.get('type') || 'all',
@@ -174,6 +172,17 @@ const render = async () => {
         const payload = await api.search(q, filters);
         page = searchPage(payload.query || q, payload.filters || filters, payload.items || []);
       }
+    } else if (path.startsWith('/watch/')) {
+      const id = decodeURIComponent(path.replace('/watch/', ''));
+      page = watchPage(await api.watch(id));
+    } else if (path.startsWith('/shorts/')) {
+      const id = decodeURIComponent(path.replace('/shorts/', ''));
+      const payload = await api.watch(id);
+      if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
+        navigate(`/watch/${encodeURIComponent(id)}`, { replace: true });
+        return;
+      }
+      page = shortsPage(payload);
     } else if (path.startsWith('/channel/')) {
       const id = decodeURIComponent(path.replace('/channel/', ''));
       const sortBy = String(query.get('sortBy') || 'newest');
@@ -199,6 +208,7 @@ const render = async () => {
     if (token === state.renderToken) {
       setLoadingState(false);
       bindSearchForm();
+      bindPlayers();
     }
   }
 };

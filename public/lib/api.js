@@ -58,13 +58,12 @@ export const api = {
     const url = `/api/watch/${encodeURIComponent(id)}`;
     return fetchJson(url, { cacheKey: url });
   },
-  watchComments: (id, continuation = '', instance = '') => {
-    const url = `/api/watch/${encodeURIComponent(id)}/comments${toQuery({ continuation, instance })}`;
+  watchComments: (id, continuation = '') => {
+    const url = `/api/watch/${encodeURIComponent(id)}/comments${toQuery({ continuation })}`;
     return fetchJson(url, { cacheKey: url });
   },
   channel: (id, params = {}) => {
     const url = `/api/channel${toQuery({ id, ...params })}`;
     return fetchJson(url, { cacheKey: url });
   },
-  thumbnail: (url) => `/api/thumbnail${toQuery({ url })}`,
 };

@@ -3,7 +3,7 @@ import { badRequest, HttpError } from '../lib/httpError.js';
 import { fetchChannelPage } from '../services/channelService.js';
 import { fetchSearchPage, fetchSearchSuggestions, fetchTrendingPage } from '../services/searchService.js';
 import { streamThumbnail } from '../services/thumbnailService.js';
-import { fetchVideoComments, fetchVideoPage, streamVideo } from '../services/videoService.js';
+import { downloadVideo, fetchVideoComments, fetchVideoPage, streamVideo } from '../services/videoService.js';
 
 export const apiRouter = express.Router();
 
@@ -19,8 +19,6 @@ const parseSearchFilters = (query) => ({
   region: String(query.region || '').trim().toUpperCase() || undefined,
   hl: String(query.hl || '').trim() || undefined,
 });
-
-apiRouter.get('/health', (_req, res) => res.json({ ok: true }));
 
 apiRouter.get('/search', asyncHandler(async (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -53,13 +51,16 @@ apiRouter.get('/watch/:id/comments', asyncHandler(async (req, res) => {
   const data = await fetchVideoComments(
     String(req.params.id || '').trim(),
     String(req.query.continuation || '').trim(),
-    String(req.query.instance || '').trim(),
   );
   res.json(data);
 }));
 
 apiRouter.get('/watch/:id/stream', asyncHandler(async (req, res) => {
   await streamVideo(req, res, String(req.params.id || '').trim());
+}));
+
+apiRouter.get('/watch/:id/download', asyncHandler(async (req, res) => {
+  await downloadVideo(req, res, String(req.params.id || '').trim());
 }));
 
 apiRouter.get('/thumbnail', asyncHandler(async (req, res) => {

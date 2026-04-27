@@ -155,11 +155,10 @@ const getInvidiousVideo = async (videoId) => {
 };
 
 export const resolveVideoContext = async (videoId) => {
-  const proxy = String(process.env.YTDLP_PROXY || '').trim();
   const attempts = [
-    async () => getInvidiousVideo(videoId),
-    async () => getYtDlpVideo(videoId, proxy),
-    async () => getYtDlpVideo(videoId, ''),
+    () => getInvidiousVideo(videoId),
+    ...(config.ytdlpProxy ? [() => getYtDlpVideo(videoId, config.ytdlpProxy)] : []),
+    () => getYtDlpVideo(videoId, ''),
   ];
 
   const errors = [];
@@ -179,6 +178,10 @@ export const resolveVideoContext = async (videoId) => {
   throw unavailable('video retrieval failed', errors);
 };
 
+
+const normalizeInvidiousInstance = (instance = '') => (
+  config.invidiousInstances.includes(instance) ? instance : config.invidiousInstances[0]
+);
 const normalizeCommentsPayload = (payload = {}) => ({
   comments: Array.isArray(payload.comments) ? payload.comments.map(normalizeComment) : [],
   commentCount: Number(payload.commentCount || 0),
@@ -198,7 +201,7 @@ const fetchInitialComments = async (commentsProvider, videoId) => {
   }
 };
 
-const buildPlayerPayload = ({ video, provider, commentsProvider, playback, comments, related }) => {
+const buildPlayerPayload = ({ video, provider, playback, comments, related }) => {
   const thumbnails = Array.isArray(video?.videoThumbnails) && video.videoThumbnails.length ? video.videoThumbnails : normalizeThumbnails(video?.thumbnails || []);
   const thumbnail = pickThumbnail(thumbnails);
   const captions = Array.isArray(video?.captions) ? video.captions : normalizeCaptionTracks(video?.subtitles || video?.automatic_captions || {});
@@ -216,7 +219,6 @@ const buildPlayerPayload = ({ video, provider, commentsProvider, playback, comme
       sourceLabel: provider.label || provider.name || '',
     },
     provider,
-    commentsProvider,
     playback,
     comments: Array.isArray(comments?.comments) ? comments.comments : [],
     commentsContinuation: String(comments?.continuation || ''),
@@ -234,6 +236,66 @@ const chooseBestPlayback = (video) => {
   return null;
 };
 
+const safeDispositionName = (value) => String(value || 'video')
+  .replace(/[\\/:*?"<>|]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim() || 'video';
+
+const contentDisposition = (title, download = false) => {
+  const fileName = `${safeDispositionName(title)}.mp4`;
+  const encoded = encodeURIComponent(fileName).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  const ascii = fileName.replace(/[^\x20-\x7E]/g, '_');
+  const mode = download ? 'attachment' : 'inline';
+  return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+};
+
+const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
+  const context = await resolveVideoContext(videoId);
+  const source = chooseBestPlayback(context.video);
+
+  if (!source) throw notFound('playback source not found');
+
+  const videoTitle = String(context.video?.title || videoId || 'video');
+  res.setHeader('Cache-Control', 'no-store');
+
+  if (source.kind === 'direct' && source.url) {
+    await proxyMediaStream(res, source.url, {
+      range: String(req.headers.range || ''),
+      contentDisposition: contentDisposition(videoTitle, download),
+    });
+    return;
+  }
+
+  if (source.kind === 'dash' && source.videoUrl && source.audioUrl) {
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
+    await streamWithFfmpeg(res, [source.videoUrl, source.audioUrl], ['-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    return;
+  }
+
+  if (source.kind === 'hls' && source.url) {
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
+    await streamWithFfmpeg(res, [source.url], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    return;
+  }
+
+  if (source.kind === 'dashManifest' && source.url) {
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
+    await streamWithFfmpeg(res, [source.url], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    return;
+  }
+
+  throw unavailable('unsupported playback source');
+};
+
 export const fetchVideoPage = async (videoId) => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!safeVideoId) throw badRequest('video id required');
@@ -247,66 +309,29 @@ export const fetchVideoPage = async (videoId) => {
   return buildPlayerPayload({
     video: context.video,
     provider: context.provider,
-    commentsProvider: context.commentsProvider,
     playback,
     comments,
     related: context.related,
   });
 };
 
-export const fetchVideoComments = async (videoId, continuation = '', instance = '') => {
+export const fetchVideoComments = async (videoId, continuation = '') => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!isNonEmptyString(safeVideoId)) throw badRequest('video id required');
 
-  const sourceInstance = isNonEmptyString(instance) ? instance : config.invidiousInstances[0];
-  const { instance: resolvedInstance, data } = await getCommentsFromInstance(sourceInstance, safeVideoId, continuation);
+  const sourceInstance = normalizeInvidiousInstance();
+  const { data } = await getCommentsFromInstance(sourceInstance, safeVideoId, continuation);
   return {
-    provider: { kind: 'invidious', name: 'invidious', instance: resolvedInstance, label: 'Invidious' },
     comments: Array.isArray(data?.comments) ? data.comments.map(normalizeComment) : [],
     commentCount: Number(data?.commentCount || 0),
     continuation: String(data?.continuation || ''),
   };
 };
 
-const streamSingleInput = async (res, url, outputOptions = []) =>
-  streamWithFfmpeg(res, [url], ['-map', '0:v:0', '-map', '0:a:0?', ...outputOptions]);
-
 export const streamVideo = async (req, res, videoId) => {
-  const context = await resolveVideoContext(videoId);
-  const source = chooseBestPlayback(context.video);
+  await sendPlayback(req, res, videoId, { download: false });
+};
 
-  if (!source) throw notFound('playback source not found');
-
-  res.setHeader('Cache-Control', 'no-store');
-
-  if (source.kind === 'direct' && source.url) {
-    await proxyMediaStream(res, source.url, { range: String(req.headers.range || '') });
-    return;
-  }
-
-  if (source.kind === 'dash' && source.videoUrl && source.audioUrl) {
-    res.status(200);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'none');
-    await streamWithFfmpeg(res, [source.videoUrl, source.audioUrl], ['-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
-    return;
-  }
-
-  if (source.kind === 'hls' && source.url) {
-    res.status(200);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'none');
-    await streamSingleInput(res, source.url, ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
-    return;
-  }
-
-  if (source.kind === 'dashManifest' && source.url) {
-    res.status(200);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'none');
-    await streamSingleInput(res, source.url, ['-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
-    return;
-  }
-
-  throw unavailable('unsupported playback source');
+export const downloadVideo = async (req, res, videoId) => {
+  await sendPlayback(req, res, videoId, { download: true });
 };
