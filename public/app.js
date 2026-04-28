@@ -1,8 +1,8 @@
 import { api } from './lib/api.js';
 import { navigate, onInternalLink, currentUrl } from './lib/router.js';
 import { escapeHtml } from './lib/format.js';
-import { commentCard } from './lib/cards.js';
-import { homePage, searchPage, shortsFeedPage, trendingPage, watchPage, shortsPage, channelPage, notFoundPage } from './pages.js';
+import { commentCard, videoCard } from './lib/cards.js';
+import { homePage, searchPage, shortsPage, trendingPage, watchPage, channelPage, notFoundPage } from './pages.js';
 import { setLoadingState } from './lib/ui.js';
 import { bindPlayers } from './lib/player.js';
 
@@ -21,15 +21,6 @@ const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
 
 const readSearchParams = () => currentUrl().searchParams;
 
-const dismissSearchSuggestions = () => {
-  state.searchAbort?.abort?.();
-  clearTimeout(state.searchTimer);
-  const box = document.getElementById('search-suggestions');
-  if (!box) return;
-  box.hidden = true;
-  box.innerHTML = '';
-};
-
 const buildSearchUrl = (params = {}) => {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -38,28 +29,6 @@ const buildSearchUrl = (params = {}) => {
   }
   const query = search.toString();
   return query ? `/search?${query}` : '/search';
-};
-
-const applySidebarPreference = () => {
-  let collapsed = false;
-  try {
-    collapsed = window.localStorage.getItem('auroratube.sidebar') === 'collapsed';
-  } catch {
-    collapsed = false;
-  }
-  document.body.classList.toggle('sidebar-collapsed', collapsed);
-  document.querySelector('[data-sidebar-toggle]')?.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
-};
-
-const toggleSidebar = () => {
-  const collapsed = !document.body.classList.contains('sidebar-collapsed');
-  document.body.classList.toggle('sidebar-collapsed', collapsed);
-  try {
-    window.localStorage.setItem('auroratube.sidebar', collapsed ? 'collapsed' : 'expanded');
-  } catch {
-    // ignore storage failures
-  }
-  document.querySelector('[data-sidebar-toggle]')?.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
 };
 
 const bindSearchForm = () => {
@@ -108,7 +77,6 @@ const bindSearchForm = () => {
     const button = event.target.closest?.('[data-suggestion]');
     if (!button) return;
     const value = button.getAttribute('data-suggestion') || '';
-    dismissSearchSuggestions();
     navigate(buildSearchUrl({ q: value }));
   });
 };
@@ -137,15 +105,29 @@ const appendComments = async (button, signal) => {
   }
 };
 
+const appendChannelVideos = async (button, signal) => {
+  const channelId = button.getAttribute('data-channel-id') || '';
+  const continuation = button.getAttribute('data-load-channel') || '';
+  const sortBy = button.getAttribute('data-sort-by') || 'newest';
+  if (!channelId || !continuation) return;
+
+  setButtonState(button, '読み込み中…', true);
+
+  try {
+    const payload = await api.channel(channelId, { continuation, sortBy }, signal);
+    const grid = document.querySelector('[data-channel-grid]');
+    if (grid && Array.isArray(payload.videos)) {
+      grid.insertAdjacentHTML('beforeend', payload.videos.map((item) => videoCard(item)).join(''));
+    }
+    button.remove();
+  } catch (error) {
+    setButtonState(button, error?.message || '失敗しました', false);
+  }
+};
+
 const bindDynamicButtons = () => {
   document.addEventListener('click', async (event) => {
     if (onInternalLink(event)) return;
-
-    const sidebarToggle = event.target.closest?.('[data-sidebar-toggle]');
-    if (sidebarToggle) {
-      toggleSidebar();
-      return;
-    }
 
     const commentButton = event.target.closest?.('[data-load-comments]');
     if (commentButton) {
@@ -153,8 +135,9 @@ const bindDynamicButtons = () => {
       return;
     }
 
-    if (!event.target.closest?.('#search-form')) {
-      dismissSearchSuggestions();
+    const channelButton = event.target.closest?.('[data-load-channel]');
+    if (channelButton) {
+      await appendChannelVideos(channelButton, state.renderAbort?.signal);
     }
   });
 };
@@ -185,13 +168,9 @@ const render = async () => {
 
   try {
     let page;
-
     if (path === '/' || path === '') {
       const trending = await api.trending('default', defaultRegion, signal);
       page = homePage(trending.items || [], defaultRegion);
-    } else if (path === '/shorts') {
-      const trending = await api.trending('default', defaultRegion, signal);
-      page = shortsFeedPage(trending.items || [], defaultRegion);
     } else if (path === '/trending') {
       const trending = await api.trending('default', defaultRegion, signal);
       page = trendingPage(trending.items || [], defaultRegion);
@@ -199,7 +178,7 @@ const render = async () => {
       const q = String(query.get('q') || '').trim();
       if (!q) {
         const trending = await api.trending('default', defaultRegion, signal);
-        page = homePage(trending.items || [], defaultRegion);
+        page = trendingPage(trending.items || [], defaultRegion);
       } else {
         const filters = {
           type: query.get('type') || 'all',
@@ -245,7 +224,6 @@ const render = async () => {
     document.title = 'AuroraTube';
   } finally {
     if (token === state.renderToken) {
-      applySidebarPreference();
       bindSearchForm();
       bindPlayers();
     }
@@ -254,10 +232,6 @@ const render = async () => {
 };
 
 window.addEventListener('popstate', render);
-window.addEventListener('app:navigate', () => {
-  dismissSearchSuggestions();
-  render();
-});
+window.addEventListener('app:navigate', render);
 bindDynamicButtons();
-applySidebarPreference();
 render();

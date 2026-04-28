@@ -8,7 +8,6 @@ const PRIVATE_V4_RANGES = [
   ['127.0.0.0', '127.255.255.255'],
   ['169.254.0.0', '169.254.255.255'],
   ['172.16.0.0', '172.31.255.255'],
-  ['192.0.0.0', '192.0.0.255'],
   ['192.0.2.0', '192.0.2.255'],
   ['192.168.0.0', '192.168.255.255'],
   ['198.18.0.0', '198.19.255.255'],
@@ -16,17 +15,12 @@ const PRIVATE_V4_RANGES = [
   ['203.0.113.0', '203.0.113.255'],
 ];
 
-const PRIVATE_V6_PREFIXES = [
+const privateV6Prefixes = [
   '::1',
   'fc',
   'fd',
   'fe80',
   '2001:db8',
-  '::ffff:127.',
-  '::ffff:10.',
-  '::ffff:192.168.',
-  '::ffff:172.',
-  '::ffff:169.254.',
 ];
 
 const startsWithPrefix = (address, prefixes) =>
@@ -48,18 +42,9 @@ const isPrivateIpv4 = (address) => {
   });
 };
 
-const isPrivateIpv6 = (address) => startsWithPrefix(String(address).toLowerCase(), PRIVATE_V6_PREFIXES);
-
-const isLocalHost = (hostname) => {
-  const host = String(hostname || '').trim().toLowerCase();
-  return host === 'localhost'
-    || host.endsWith('.localhost')
-    || host.endsWith('.local')
-    || host.endsWith('.lan')
-    || host.endsWith('.home.arpa')
-    || host.endsWith('.internal')
-    || host.endsWith('.private')
-    || host === 'metadata.google.internal';
+const isPrivateIpv6 = (address) => {
+  const lower = String(address).toLowerCase();
+  return startsWithPrefix(lower, privateV6Prefixes);
 };
 
 export const isPublicIpAddress = (address) => {
@@ -70,7 +55,9 @@ export const isPublicIpAddress = (address) => {
 
 export const isProbablyPublicHost = (hostname) => {
   const host = String(hostname || '').trim().toLowerCase();
-  if (!host || isLocalHost(host)) return false;
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.lan')) return false;
+  if (host === 'metadata.google.internal') return false;
   if (isIP(host)) return isPublicIpAddress(host);
   return true;
 };

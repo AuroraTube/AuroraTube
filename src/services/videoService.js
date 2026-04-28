@@ -106,18 +106,11 @@ const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
     });
     let stderr = '';
     let settled = false;
-    let clientClosed = false;
 
-    const settle = (fn, value) => {
+    const fail = (error) => {
       if (settled) return;
       settled = true;
-      fn(value);
-    };
-
-    const abortStream = () => {
-      clientClosed = true;
-      child.kill('SIGKILL');
-      settle(resolve);
+      reject(error);
     };
 
     child.stderr.on('data', (chunk) => {
@@ -125,28 +118,19 @@ const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
     });
 
     child.once('error', (error) => {
-      if (clientClosed) return;
-      settle(reject, unavailable('ffmpeg is not available', error?.message));
+      fail(unavailable('ffmpeg is not available', error?.message));
     });
 
-    res.once('close', abortStream);
-    res.once('error', abortStream);
-    child.stdout.once('error', (error) => {
-      if (clientClosed) return;
-      settle(reject, unavailable('stream pipe failed', error?.message));
-    });
+    res.once('close', () => child.kill('SIGKILL'));
     child.stdout.pipe(res);
 
     child.once('close', (code) => {
       if (settled) return;
-      if (clientClosed) {
-        settle(resolve);
-        return;
-      }
+      settled = true;
       if (code === 0) {
-        settle(resolve);
+        resolve();
       } else {
-        settle(reject, unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
+        reject(unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
       }
     });
   });
@@ -291,7 +275,7 @@ const contentDisposition = (title, download = false) => {
   return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 };
 
-const sendPlayback = async (_req, res, videoId, { download = false } = {}) => {
+const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
   const context = await resolveVideoContext(videoId);
   const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, { videoId, allowHls: Boolean(context.provider?.kind === 'ytdlp') });
 

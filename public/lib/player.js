@@ -5,9 +5,7 @@ const formatTime = (seconds) => {
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   const secs = Math.floor(total % 60);
-  return hours
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-    : `${minutes}:${String(secs).padStart(2, '0')}`;
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
 };
 
 const escapeAttr = (value) => String(value ?? '')
@@ -16,8 +14,6 @@ const escapeAttr = (value) => String(value ?? '')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;');
-
-const toggleButtonLabel = (playing) => (playing ? '❚❚' : '▶');
 
 export const playerMarkup = ({
   videoId = '',
@@ -29,19 +25,24 @@ export const playerMarkup = ({
   const playbackUrl = playback.playUrl || playback.streamUrl || (safeVideoId ? `/api/watch/${encodeURIComponent(videoId)}/stream` : '');
   const finalUrl = playback.finalUrl || '';
   const proxy = Boolean(playback.proxy);
+  const warning = String(playback.warning || '');
+  const proxyLabel = proxy ? 'PROXY' : 'DIRECT';
 
   return `
-    <section class="player-frame player-shell ${short ? 'player-frame-short player-shell-short' : ''}" data-player data-video-id="${safeVideoId}" data-playback-url="${escapeAttr(playbackUrl)}" data-final-url="${escapeAttr(finalUrl)}" data-proxy="${proxy ? 'true' : 'false'}">
+    <section class="player-frame player-shell ${short ? 'player-frame-short player-shell-short' : ''}" data-player data-video-id="${safeVideoId}" data-playback-url="${escapeAttr(playbackUrl)}" data-final-url="${escapeAttr(finalUrl)}" data-proxy="${proxy ? 'true' : 'false'}" data-warning="${escapeAttr(warning)}">
       <div class="player-stage">
         <video class="player-video" playsinline preload="metadata"${poster ? ` poster="${escapeAttr(poster)}"` : ''} src="${escapeAttr(playbackUrl)}"></video>
+        <div class="player-overlay"></div>
         <button class="player-center" type="button" data-player-play aria-label="再生/一時停止">▶</button>
+        <div class="player-badges">
+          <span class="player-badge ${proxy ? 'player-badge-proxy' : 'player-badge-direct'}">${proxyLabel}</span>
+          ${warning ? `<span class="player-badge player-badge-warning">${escapeAttr(warning)}</span>` : ''}
+        </div>
       </div>
 
       <div class="player-controls">
         <div class="player-row player-row-main">
-          <button class="player-icon-button" type="button" data-player-backward aria-label="10秒戻る">⟲10</button>
-          <button class="player-icon-button player-icon-button-primary" type="button" data-player-play-toggle aria-label="再生/一時停止">▶</button>
-          <button class="player-icon-button" type="button" data-player-forward aria-label="10秒進む">10⟳</button>
+          <button class="player-icon-button player-icon-button-primary" type="button" data-player-play-toggle aria-label="再生/一時停止">再生</button>
           <div class="player-progress-wrap">
             <input class="player-progress" type="range" min="0" max="1000" value="0" step="1" data-player-progress aria-label="再生位置" />
           </div>
@@ -49,7 +50,7 @@ export const playerMarkup = ({
         </div>
 
         <div class="player-row player-row-secondary">
-          <button class="player-icon-button" type="button" data-player-mute aria-label="ミュート">🔊</button>
+          <button class="player-icon-button" type="button" data-player-mute aria-label="ミュート">音量</button>
           <input class="player-volume" type="range" min="0" max="1" value="1" step="0.05" data-player-volume aria-label="音量" />
           <label class="player-speed-label">
             <span>速度</span>
@@ -57,7 +58,8 @@ export const playerMarkup = ({
               ${SPEEDS.map((speed) => `<option value="${speed}"${speed === 1 ? ' selected' : ''}>${speed}x</option>`).join('')}
             </select>
           </label>
-          <button class="player-icon-button" type="button" data-player-fullscreen aria-label="全画面">⛶</button>
+          <a class="player-icon-button" data-player-download href="${escapeAttr(playbackUrl)}" download>DL</a>
+          <button class="player-icon-button" type="button" data-player-fullscreen aria-label="全画面">全画面</button>
         </div>
       </div>
     </section>
@@ -68,13 +70,12 @@ const syncState = (root) => {
   const video = root.querySelector('.player-video');
   const playToggle = root.querySelector('[data-player-play-toggle]');
   const playCenter = root.querySelector('[data-player-play]');
-  const backward = root.querySelector('[data-player-backward]');
-  const forward = root.querySelector('[data-player-forward]');
   const progress = root.querySelector('[data-player-progress]');
   const time = root.querySelector('[data-player-time]');
   const mute = root.querySelector('[data-player-mute]');
   const volume = root.querySelector('[data-player-volume]');
   const speed = root.querySelector('[data-player-speed]');
+  const download = root.querySelector('[data-player-download]');
   const fullscreen = root.querySelector('[data-player-fullscreen]');
 
   if (!video || root.dataset.playerMounted === 'true') return;
@@ -91,17 +92,16 @@ const syncState = (root) => {
 
   const updatePlayState = () => {
     const playing = !video.paused && !video.ended;
-    const label = toggleButtonLabel(playing);
-    if (playToggle) playToggle.textContent = label;
+    if (playToggle) playToggle.textContent = playing ? '一時停止' : '再生';
     if (playCenter) {
-      playCenter.textContent = label;
+      playCenter.textContent = playing ? '❚❚' : '▶';
       playCenter.hidden = playing;
     }
   };
 
   const updateMuteState = () => {
     if (!mute) return;
-    mute.textContent = video.muted || video.volume === 0 ? '🔇' : '🔊';
+    mute.textContent = video.muted || video.volume === 0 ? 'ミュート' : '音量';
   };
 
   const updateVolumeState = () => {
@@ -121,17 +121,8 @@ const syncState = (root) => {
     }
   };
 
-  const seek = (deltaSeconds) => {
-    if (!Number.isFinite(video.duration) || video.duration <= 0) return;
-    const nextTime = Math.max(0, Math.min(video.duration, (video.currentTime || 0) + deltaSeconds));
-    video.currentTime = nextTime;
-    updateTime();
-  };
-
   playToggle?.addEventListener('click', togglePlay);
   playCenter?.addEventListener('click', togglePlay);
-  backward?.addEventListener('click', () => seek(-10));
-  forward?.addEventListener('click', () => seek(10));
 
   progress?.addEventListener('input', () => {
     if (!Number.isFinite(video.duration) || video.duration <= 0) return;
@@ -159,6 +150,11 @@ const syncState = (root) => {
   speed?.addEventListener('change', () => {
     const value = Number(speed.value || 1);
     video.playbackRate = SPEEDS.includes(value) ? value : 1;
+  });
+
+  download?.addEventListener('click', (event) => {
+    event.preventDefault();
+    window.location.href = download.getAttribute('href') || '#';
   });
 
   fullscreen?.addEventListener('click', async () => {
