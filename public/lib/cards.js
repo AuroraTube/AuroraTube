@@ -21,9 +21,7 @@ export const isShortVideo = (item) => {
 const videoHref = (item, variant = 'grid') => {
   if (!item?.videoId) return '#';
   const id = encodeURIComponent(item.videoId);
-  if (variant === 'short' || isShortVideo(item)) {
-    return `/shorts/${id}`;
-  }
+  if (variant === 'short' || isShortVideo(item)) return `/shorts/${id}`;
   return `/watch/${id}`;
 };
 
@@ -68,6 +66,11 @@ export const videoCard = (item, variant = 'grid') => {
 
 export const channelCard = (item) => {
   const link = item.authorId ? `/channel/${encodeURIComponent(item.authorId)}` : '#';
+  const stats = [item.subCountText, item.videoCount ? `${formatCompactNumber(item.videoCount)} 本の動画` : '']
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join(' • ');
+
   return `
     <article class="channel-card">
       <a href="${link}" class="channel-card-head">
@@ -75,6 +78,7 @@ export const channelCard = (item) => {
         <span class="channel-card-copy">
           <div class="playlist-title">${escapeHtml(item.author || '')}</div>
           <div class="channel-submeta">${escapeHtml(item.authorId || '')}</div>
+          ${stats ? `<div class="submeta">${stats}</div>` : ''}
         </span>
       </a>
       <p class="channel-description">${escapeHtml(compactText(item.description || '', 140))}</p>

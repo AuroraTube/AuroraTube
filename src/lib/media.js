@@ -1,20 +1,5 @@
 import { isNonEmptyString, isPlainObject, toNumber, uniqueBy } from './strings.js';
 
-const parseHeight = (value) => {
-  const match = String(value || '').match(/(\d{3,4})p/i);
-  return match ? Number(match[1]) : 0;
-};
-
-const parseUrlFromCipher = (format) => {
-  const cipher = format?.signatureCipher || format?.signature_cipher || format?.cipher;
-  if (!cipher) return null;
-  try {
-    return new URLSearchParams(cipher).get('url');
-  } catch {
-    return null;
-  }
-};
-
 export const normalizeThumbnails = (thumbnails = []) =>
   (Array.isArray(thumbnails) ? thumbnails : [])
     .filter(isPlainObject)
@@ -142,45 +127,20 @@ export const normalizeSearchItem = (item = {}) => {
   }
 };
 
-const isMuxed = (format) =>
-  Boolean(format && ((format.vcodec && format.vcodec !== 'none' && format.acodec && format.acodec !== 'none') || (format.mime && format.mime.includes('video') && format.mime.includes('audio'))));
-
-const isVideoOnly = (format) =>
-  Boolean(format && ((format.vcodec && format.vcodec !== 'none' && (!format.acodec || format.acodec === 'none')) || (format.mime && format.mime.includes('video') && !format.mime.includes('audio'))));
-
-const isAudioOnly = (format) =>
-  Boolean(format && ((format.acodec && format.acodec !== 'none' && (!format.vcodec || format.vcodec === 'none')) || (format.mime && format.mime.includes('audio') && !format.mime.includes('video'))));
-
-const scoreVideo = (format) => [toNumber(format.height, 0), toNumber(format.width, 0), toNumber(format.fps, 0), toNumber(format.tbr, 0), toNumber(format.filesize_approx || format.filesize, 0)];
-const scoreAudio = (format) => [toNumber(format.abr, 0), toNumber(format.tbr, 0), toNumber(format.filesize_approx || format.filesize, 0)];
-
-const compareScore = (left, right) => {
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return right[index] - left[index];
-  }
-  return 0;
-};
-
-const normalizeFormat = (format) => {
-  if (!isPlainObject(format)) return null;
-  const mime = String(format.mimeType || format.mime_type || format.type || '').toLowerCase();
-  return {
-    ...format,
-    url: String(format.url || parseUrlFromCipher(format) || ''),
-    mime,
-    vcodec: String(format.vcodec || '').toLowerCase(),
-    acodec: String(format.acodec || '').toLowerCase(),
-    width: toNumber(format.width, 0),
-    height: toNumber(format.height || parseHeight(format.qualityLabel || format.resolution), 0),
-    fps: toNumber(format.fps, 0),
-    tbr: toNumber(format.tbr || format.bitrate || format.total_bitrate, 0),
-    abr: toNumber(format.abr || format.audioBitrate, 0),
-    vbr: toNumber(format.vbr, 0),
-    filesize: toNumber(format.filesize, 0),
-    filesize_approx: toNumber(format.filesize_approx, 0),
-    qualityLabel: String(format.qualityLabel || format.quality_label || format.resolution || ''),
-  };
-};
+const normalizeFormat = (format = {}) => ({
+  url: String(format.url || format?.downloadUrl || ''),
+  mime: String(format.mimeType || format.mime || ''),
+  vcodec: String(format.vcodec || ''),
+  acodec: String(format.acodec || ''),
+  width: toNumber(format.width, 0),
+  height: toNumber(format.height, 0),
+  fps: toNumber(format.fps, 0),
+  tbr: toNumber(format.tbr, 0),
+  abr: toNumber(format.abr, 0),
+  filesize: toNumber(format.filesize, 0),
+  filesize_approx: toNumber(format.filesize_approx, 0),
+  qualityLabel: String(format.qualityLabel || format.quality_label || format.resolution || ''),
+});
 
 export const collectFormats = (raw = {}) => {
   const sources = [
@@ -207,30 +167,6 @@ export const collectFormats = (raw = {}) => {
   }
 
   return out;
-};
-
-export const choosePlaybackSource = (video = {}) => {
-  const formats = collectFormats(video);
-  const muxed = [...formats].filter(isMuxed).sort((a, b) => compareScore(scoreVideo(a), scoreVideo(b)))[0] || null;
-  if (muxed?.url) {
-    return { kind: 'direct', url: muxed.url, source: 'formatStreams' };
-  }
-
-  if (isNonEmptyString(video.hlsUrl)) {
-    return { kind: 'hls', url: video.hlsUrl, source: 'hlsUrl' };
-  }
-
-  const videoOnly = [...formats].filter(isVideoOnly).sort((a, b) => compareScore(scoreVideo(a), scoreVideo(b)))[0] || null;
-  const audioOnly = [...formats].filter(isAudioOnly).sort((a, b) => compareScore(scoreAudio(a), scoreAudio(b)))[0] || null;
-  if (videoOnly?.url && audioOnly?.url) {
-    return { kind: 'dash', videoUrl: videoOnly.url, audioUrl: audioOnly.url, source: 'adaptiveFormats' };
-  }
-
-  if (isNonEmptyString(video.dashUrl)) {
-    return { kind: 'dashManifest', url: video.dashUrl, source: 'dashUrl' };
-  }
-
-  return null;
 };
 
 export const dedupeVideos = (videos = []) => uniqueBy(videos, (item) => item.videoId || item.playlistId || item.authorId || item.url || item.title);

@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 import { config } from '../config.js';
 import { badRequest, notFound, unavailable } from '../lib/httpError.js';
-import { choosePlaybackSource, normalizeCaptionTracks, normalizeThumbnails, normalizeVideoItem, pickThumbnail } from '../lib/media.js';
+import { normalizeCaptionTracks, normalizeThumbnails, normalizeVideoItem, pickThumbnail } from '../lib/media.js';
+import { selectPlaybackPlan } from '../lib/playback.js';
 import { isNonEmptyString, isPlainObject } from '../lib/strings.js';
 import { extractYouTubeVideoId } from '../lib/youtube.js';
 import { getCommentsFromInstance, fetchFromAny } from '../providers/invidious.js';
 import { fetchYtDlpJson } from '../providers/ytdlp.js';
-import { proxyMediaStream } from './mediaProxy.js';
 
 const normalizeComment = (comment = {}) => ({
   commentId: String(comment.commentId || ''),
@@ -37,58 +37,6 @@ const normalizeComment = (comment = {}) => ({
       }
     : null,
 });
-
-const firstAvailableUrl = (video) => {
-  const formats = Array.isArray(video?.formats) ? video.formats : [];
-  const direct = formats.find((format) => isNonEmptyString(format?.url));
-  return direct?.url || '';
-};
-
-const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
-  new Promise((resolve, reject) => {
-    const args = [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-nostdin',
-      ...inputs.flatMap((input) => ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2', '-i', input]),
-      ...outputOptions,
-      '-f',
-      'mp4',
-      'pipe:1',
-    ];
-
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    let stderr = '';
-    let settled = false;
-
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    child.once('error', (error) => {
-      fail(unavailable('ffmpeg is not available', error?.message));
-    });
-
-    res.once('close', () => child.kill('SIGKILL'));
-    child.stdout.pipe(res);
-
-    child.once('close', (code) => {
-      if (settled) return;
-      settled = true;
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
-      }
-    });
-  });
 
 const normalizeYtDlpVideo = (raw = {}) => {
   const base = normalizeVideoItem({
@@ -128,16 +76,91 @@ const normalizeYtDlpVideo = (raw = {}) => {
   };
 };
 
-const getYtDlpVideo = async (videoId, proxy = '') => {
-  const { data, command } = await fetchYtDlpJson(videoId, { proxy });
+const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
+  new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-nostdin',
+      ...(isNonEmptyString(config.ytdlpProxy) ? ['-http_proxy', config.ytdlpProxy] : []),
+      ...inputs.flatMap((input) => ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2', '-i', input]),
+      ...outputOptions,
+      '-f',
+      'mp4',
+      'pipe:1',
+    ];
+
+    const child = spawn('ffmpeg', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: {
+        ...process.env,
+        ...(isNonEmptyString(config.ytdlpProxy) ? {
+          http_proxy: config.ytdlpProxy,
+          https_proxy: config.ytdlpProxy,
+          HTTP_PROXY: config.ytdlpProxy,
+          HTTPS_PROXY: config.ytdlpProxy,
+        } : {}),
+      },
+    });
+    let stderr = '';
+    let settled = false;
+    let clientClosed = false;
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
+
+    const abortStream = () => {
+      clientClosed = true;
+      child.kill('SIGKILL');
+      settle(resolve);
+    };
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    child.once('error', (error) => {
+      if (clientClosed) return;
+      settle(reject, unavailable('ffmpeg is not available', error?.message));
+    });
+
+    res.once('close', abortStream);
+    res.once('error', abortStream);
+    child.stdout.once('error', (error) => {
+      if (clientClosed) return;
+      settle(reject, unavailable('stream pipe failed', error?.message));
+    });
+    child.stdout.pipe(res);
+
+    child.once('close', (code) => {
+      if (settled) return;
+      if (clientClosed) {
+        settle(resolve);
+        return;
+      }
+      if (code === 0) {
+        settle(resolve);
+      } else {
+        settle(reject, unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
+      }
+    });
+  });
+
+const getYtDlpVideo = async (videoId) => {
+  const { data, command } = await fetchYtDlpJson(videoId, { proxy: config.ytdlpProxy });
   const video = normalizeYtDlpVideo(data);
   return {
     provider: {
       kind: 'ytdlp',
       name: 'yt-dlp',
-      mode: isNonEmptyString(proxy) ? 'proxy' : 'direct',
-      label: isNonEmptyString(proxy) ? 'ytDlp(proxy)' : 'ytDlp(direct)',
-      proxy: isNonEmptyString(proxy) ? proxy : '',
+      mode: isNonEmptyString(config.ytdlpProxy) ? 'proxy' : 'direct',
+      label: isNonEmptyString(config.ytdlpProxy) ? 'ytDlp(proxy)' : 'ytDlp(direct)',
+      proxy: isNonEmptyString(config.ytdlpProxy) ? config.ytdlpProxy : '',
       command,
     },
     video,
@@ -154,34 +177,53 @@ const getInvidiousVideo = async (videoId) => {
   };
 };
 
-export const resolveVideoContext = async (videoId) => {
-  const attempts = [
-    () => getInvidiousVideo(videoId),
-    ...(config.ytdlpProxy ? [() => getYtDlpVideo(videoId, config.ytdlpProxy)] : []),
-    () => getYtDlpVideo(videoId, ''),
-  ];
-
-  const errors = [];
-  for (const attempt of attempts) {
-    try {
-      const resolved = await attempt();
-      const commentsProvider = resolved.provider.kind === 'invidious'
-        ? resolved.provider
-        : { kind: 'invidious', name: 'invidious', instance: config.invidiousInstances[0], label: 'Invidious' };
-
-      return { ...resolved, commentsProvider };
-    } catch (error) {
-      errors.push(error?.message || String(error));
-    }
-  }
-
-  throw unavailable('video retrieval failed', errors);
+const selectVideoContext = (primary, fallback) => {
+  if (primary?.video) return primary;
+  if (fallback?.video) return fallback;
+  return null;
 };
 
+export const resolveVideoContext = async (videoId) => {
+  const attempts = await Promise.allSettled([getInvidiousVideo(videoId), getYtDlpVideo(videoId)]);
+  const resolved = attempts.filter((item) => item.status === 'fulfilled').map((item) => item.value);
+
+  if (!resolved.length) {
+    throw unavailable('video retrieval failed', attempts.map((item) => item.reason?.message || String(item.reason || 'unknown error')));
+  }
+
+  const invidiousContext = resolved.find((item) => item.provider.kind === 'invidious') || null;
+  const ytdlpContext = resolved.find((item) => item.provider.kind === 'ytdlp') || null;
+  const metadataContext = selectVideoContext(invidiousContext, ytdlpContext);
+  const playbackContext = selectVideoContext(ytdlpContext, invidiousContext);
+
+  const playback = selectPlaybackPlan(playbackContext.video, {
+    videoId,
+    allowHls: Boolean(ytdlpContext),
+  }) || selectPlaybackPlan(metadataContext.video, {
+    videoId,
+    allowHls: false,
+  });
+
+  if (!playback) {
+    throw unavailable('playback source not found');
+  }
+
+  return {
+    provider: metadataContext.provider,
+    video: metadataContext.video,
+    playbackVideo: playbackContext.video,
+    playback,
+    related: Array.isArray(metadataContext.related) && metadataContext.related.length ? metadataContext.related : playbackContext.related,
+    commentsProvider: invidiousContext
+      ? invidiousContext.provider
+      : null,
+  };
+};
 
 const normalizeInvidiousInstance = (instance = '') => (
   config.invidiousInstances.includes(instance) ? instance : config.invidiousInstances[0]
 );
+
 const normalizeCommentsPayload = (payload = {}) => ({
   comments: Array.isArray(payload.comments) ? payload.comments.map(normalizeComment) : [],
   commentCount: Number(payload.commentCount || 0),
@@ -206,6 +248,8 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
   const thumbnail = pickThumbnail(thumbnails);
   const captions = Array.isArray(video?.captions) ? video.captions : normalizeCaptionTracks(video?.subtitles || video?.automatic_captions || {});
   const resolvedRelated = Array.isArray(related) && related.length ? related : Array.isArray(video?.relatedVideos) ? video.relatedVideos : [];
+  const streamUrl = playback?.playUrl || `/api/watch/${encodeURIComponent(String(video.videoId || video.id || ''))}/stream`;
+  const finalUrl = playback?.sourceUrl || '';
 
   return {
     video: {
@@ -217,6 +261,14 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
       chapters: Array.isArray(video.chapters) ? video.chapters : [],
       commentsCount: Number(comments?.commentCount || 0),
       sourceLabel: provider.label || provider.name || '',
+      playback: {
+        kind: playback?.kind || 'unknown',
+        streamUrl,
+        finalUrl,
+        proxy: Boolean(playback?.proxy),
+        warning: String(playback?.warning || ''),
+        source: String(playback?.source || ''),
+      },
     },
     provider,
     playback,
@@ -224,16 +276,6 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
     commentsContinuation: String(comments?.continuation || ''),
     related: Array.isArray(resolvedRelated) ? resolvedRelated.map((item) => normalizeVideoItem(item)) : [],
   };
-};
-
-const chooseBestPlayback = (video) => {
-  const fromFormats = choosePlaybackSource(video);
-  if (fromFormats) return fromFormats;
-
-  const direct = firstAvailableUrl(video);
-  if (direct) return { kind: 'direct', url: direct, source: 'yt-dlp-formats' };
-
-  return null;
 };
 
 const safeDispositionName = (value) => String(value || 'video')
@@ -249,20 +291,21 @@ const contentDisposition = (title, download = false) => {
   return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 };
 
-const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
+const sendPlayback = async (_req, res, videoId, { download = false } = {}) => {
   const context = await resolveVideoContext(videoId);
-  const source = chooseBestPlayback(context.video);
+  const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, { videoId, allowHls: Boolean(context.provider?.kind === 'ytdlp') });
 
   if (!source) throw notFound('playback source not found');
 
   const videoTitle = String(context.video?.title || videoId || 'video');
   res.setHeader('Cache-Control', 'no-store');
 
-  if (source.kind === 'direct' && source.url) {
-    await proxyMediaStream(res, source.url, {
-      range: String(req.headers.range || ''),
-      contentDisposition: contentDisposition(videoTitle, download),
-    });
+  if (source.kind === 'muxed' && source.sourceUrl) {
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
+    await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
 
@@ -275,21 +318,12 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
     return;
   }
 
-  if (source.kind === 'hls' && source.url) {
+  if ((source.kind === 'hls' || source.kind === 'dash-manifest') && source.sourceUrl) {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
     res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
-    await streamWithFfmpeg(res, [source.url], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
-    return;
-  }
-
-  if (source.kind === 'dashManifest' && source.url) {
-    res.status(200);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'none');
-    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
-    await streamWithFfmpeg(res, [source.url], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
 
@@ -304,12 +338,11 @@ export const fetchVideoPage = async (videoId) => {
   if (!isPlainObject(context.video)) throw unavailable('video response was not an object');
 
   const comments = await fetchInitialComments(context.commentsProvider, safeVideoId);
-  const playback = chooseBestPlayback(context.video);
 
   return buildPlayerPayload({
     video: context.video,
     provider: context.provider,
-    playback,
+    playback: context.playback,
     comments,
     related: context.related,
   });

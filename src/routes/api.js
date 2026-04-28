@@ -77,6 +77,13 @@ apiRouter.get('/channel', asyncHandler(async (req, res) => {
 }));
 
 apiRouter.use((error, _req, res, _next) => {
+  if (res.headersSent) {
+    if (!res.writableEnded) {
+      res.destroy(error);
+    }
+    return;
+  }
+
   const statusCode = Number(error instanceof HttpError ? error.statusCode : error?.statusCode || 500);
   const message = error instanceof HttpError ? error.message : error?.message || 'internal error';
   if (statusCode >= 500) {

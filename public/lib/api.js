@@ -1,4 +1,5 @@
 const cache = new Map();
+const DEFAULT_TIMEOUT_MS = 15000;
 
 const toQuery = (params = {}) => {
   const search = new URLSearchParams();
@@ -25,45 +26,72 @@ const setCached = (cacheKey, value, ttlMs) => {
   cache.set(cacheKey, { value, expiresAt: Date.now() + ttlMs });
 };
 
-export const fetchJson = async (url, { cacheKey = url, signal, ttlMs = 0 } = {}) => {
+const createTimeoutSignal = (signal, timeoutMs = DEFAULT_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs);
+
+  const forwardAbort = () => controller.abort(signal?.reason || new DOMException('Aborted', 'AbortError'));
+  if (signal) {
+    if (signal.aborted) {
+      forwardAbort();
+    } else {
+      signal.addEventListener('abort', forwardAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', forwardAbort);
+    },
+  };
+};
+
+export const fetchJson = async (url, { cacheKey = url, signal, ttlMs = 0, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => {
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch(url, { headers: { accept: 'application/json' }, signal });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload.error || `HTTP ${response.status}`);
-    error.statusCode = response.status;
-    error.details = payload.details;
-    throw error;
+  const { signal: timedSignal, cleanup } = createTimeoutSignal(signal, timeoutMs);
+  try {
+    const response = await fetch(url, { headers: { accept: 'application/json' }, signal: timedSignal });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.error || `HTTP ${response.status}`);
+      error.statusCode = response.status;
+      error.details = payload.details;
+      throw error;
+    }
+    setCached(cacheKey, payload, ttlMs);
+    return payload;
+  } finally {
+    cleanup();
   }
-  setCached(cacheKey, payload, ttlMs);
-  return payload;
 };
 
 export const api = {
-  search: (query, filters = {}) => {
+  search: (query, filters = {}, signal) => {
     const url = `/api/search${toQuery({ q: query, ...filters })}`;
-    return fetchJson(url, { cacheKey: url });
+    return fetchJson(url, { cacheKey: url, signal });
   },
   suggestions: (query, signal) => {
     const url = `/api/search/suggestions${toQuery({ q: query })}`;
     return fetchJson(url, { cacheKey: url, signal, ttlMs: 5 * 60 * 1000 });
   },
-  trending: (type = 'default', region = '') => {
+  trending: (type = 'default', region = '', signal) => {
     const url = `/api/trending${toQuery({ type, region })}`;
-    return fetchJson(url, { cacheKey: url, ttlMs: 2 * 60 * 1000 });
+    return fetchJson(url, { cacheKey: url, signal, ttlMs: 2 * 60 * 1000 });
   },
-  watch: (id) => {
+  watch: (id, signal) => {
     const url = `/api/watch/${encodeURIComponent(id)}`;
-    return fetchJson(url, { cacheKey: url });
+    return fetchJson(url, { cacheKey: url, signal });
   },
-  watchComments: (id, continuation = '') => {
+  watchComments: (id, continuation = '', signal) => {
     const url = `/api/watch/${encodeURIComponent(id)}/comments${toQuery({ continuation })}`;
-    return fetchJson(url, { cacheKey: url });
+    return fetchJson(url, { cacheKey: url, signal });
   },
-  channel: (id, params = {}) => {
+  channel: (id, params = {}, signal) => {
     const url = `/api/channel${toQuery({ id, ...params })}`;
-    return fetchJson(url, { cacheKey: url });
+    return fetchJson(url, { cacheKey: url, signal });
   },
 };
