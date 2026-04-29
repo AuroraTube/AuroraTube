@@ -7,6 +7,7 @@ import {
   timeAgo,
 } from './format.js';
 import { thumbnailUrl } from './images.js';
+import { buildChannelUrl, buildShortUrl, buildWatchUrl } from './routes.js';
 
 const bestThumb = (item) =>
   item?.videoThumbnails?.slice?.().sort((a, b) => (Number(b.width || 0) * Number(b.height || 0)) - (Number(a.width || 0) * Number(a.height || 0)))[0]?.url || '';
@@ -20,11 +21,10 @@ export const isShortVideo = (item) => {
 
 const videoHref = (item, variant = 'grid') => {
   if (!item?.videoId) return '#';
-  const id = encodeURIComponent(item.videoId);
   if (variant === 'short' || isShortVideo(item)) {
-    return `/shorts/${id}`;
+    return buildShortUrl(item.videoId);
   }
-  return `/watch/${id}`;
+  return buildWatchUrl(item.videoId);
 };
 
 export const avatar = (thumbnails = [], fallback = '◉') => {
@@ -58,7 +58,7 @@ export const videoCard = (item, variant = 'grid') => {
       </a>
       <div class="video-meta">
         <a class="title ${variant === 'row' ? 'title-row' : ''}" href="${url}">${escapeHtml(item.title || '')}</a>
-        <a class="channel-link" href="${item.authorId ? `/channel/${encodeURIComponent(item.authorId)}` : '#'}">${escapeHtml(item.author || '')}</a>
+        <a class="channel-link" href="${item.authorId ? buildChannelUrl(item.authorId) : '#'}">${escapeHtml(item.author || '')}</a>
         ${meta ? `<div class="submeta">${meta}</div>` : ''}
         ${variant === 'row' && item.description ? `<p class="line-clamp">${escapeHtml(compactText(item.description || '', 180))}</p>` : ''}
       </div>
@@ -67,7 +67,7 @@ export const videoCard = (item, variant = 'grid') => {
 };
 
 export const channelCard = (item) => {
-  const link = item.authorId ? `/channel/${encodeURIComponent(item.authorId)}` : '#';
+  const link = item.authorId ? buildChannelUrl(item.authorId) : '#';
   return `
     <article class="channel-card">
       <a href="${link}" class="channel-card-head">

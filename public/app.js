@@ -5,6 +5,7 @@ import { commentCard, videoCard } from './lib/cards.js';
 import { homePage, searchPage, shortsPage, trendingPage, watchPage, channelPage, notFoundPage } from './pages.js';
 import { setLoadingState } from './lib/ui.js';
 import { bindPlayers } from './lib/player.js';
+import { buildSearchUrl, parseClientRoute } from './lib/routes.js';
 
 const app = document.getElementById('app');
 
@@ -13,23 +14,10 @@ const state = {
   searchTimer: 0,
   renderToken: 0,
   renderAbort: null,
-  activeRenders: 0,
 };
 
 const locale = navigator.language || 'ja-JP';
 const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
-
-const readSearchParams = () => currentUrl().searchParams;
-
-const buildSearchUrl = (params = {}) => {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === '') continue;
-    search.set(key, String(value));
-  }
-  const query = search.toString();
-  return query ? `/search?${query}` : '/search';
-};
 
 const bindSearchForm = () => {
   const form = document.getElementById('search-form');
@@ -41,7 +29,8 @@ const bindSearchForm = () => {
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    navigate(buildSearchUrl({ q: input.value.trim() }));
+    const query = input.value.trim();
+    navigate(query ? buildSearchUrl(query) : '/feed/trending');
   });
 
   input.addEventListener('input', () => {
@@ -77,7 +66,7 @@ const bindSearchForm = () => {
     const button = event.target.closest?.('[data-suggestion]');
     if (!button) return;
     const value = button.getAttribute('data-suggestion') || '';
-    navigate(buildSearchUrl({ q: value }));
+    navigate(buildSearchUrl(value));
   });
 };
 
@@ -142,79 +131,96 @@ const bindDynamicButtons = () => {
   });
 };
 
-const beginRender = () => {
-  state.activeRenders += 1;
-  setLoadingState(true);
-};
-
-const endRender = () => {
-  state.activeRenders = Math.max(0, state.activeRenders - 1);
-  if (state.activeRenders === 0) {
-    setLoadingState(false);
-  }
-};
-
 const render = async () => {
-  const token = ++state.renderToken;
+  const renderToken = ++state.renderToken;
   state.renderAbort?.abort?.();
   state.renderAbort = new AbortController();
   const { signal } = state.renderAbort;
 
-  beginRender();
+  setLoadingState(true);
 
   const url = currentUrl();
-  const path = url.pathname;
-  const query = readSearchParams();
+  const route = parseClientRoute(url);
 
   try {
     let page;
-    if (path === '/' || path === '') {
-      const trending = await api.trending('default', defaultRegion, signal);
-      page = homePage(trending.items || [], defaultRegion);
-    } else if (path === '/trending') {
-      const trending = await api.trending('default', defaultRegion, signal);
-      page = trendingPage(trending.items || [], defaultRegion);
-    } else if (path === '/search') {
-      const q = String(query.get('q') || '').trim();
-      if (!q) {
+    switch (route.route) {
+      case 'home': {
+        const trending = await api.trending('default', defaultRegion, signal);
+        page = homePage(trending.items || [], defaultRegion);
+        break;
+      }
+      case 'trending': {
         const trending = await api.trending('default', defaultRegion, signal);
         page = trendingPage(trending.items || [], defaultRegion);
-      } else {
-        const filters = {
-          type: query.get('type') || 'all',
-          sort: query.get('sort') || 'relevance',
-          date: query.get('date') || '',
-          duration: query.get('duration') || '',
-          features: query.get('features') || '',
-        };
-        const payload = await api.search(q, filters, signal);
-        page = searchPage(payload.query || q, payload.filters || filters, payload.items || []);
+        break;
       }
-    } else if (path.startsWith('/watch/')) {
-      const id = decodeURIComponent(path.replace('/watch/', ''));
-      page = watchPage(await api.watch(id, signal));
-    } else if (path.startsWith('/shorts/')) {
-      const id = decodeURIComponent(path.replace('/shorts/', ''));
-      const payload = await api.watch(id, signal);
-      if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
-        navigate(`/watch/${encodeURIComponent(id)}`, { replace: true });
-        return;
+      case 'search': {
+        if (!route.query) {
+          const trending = await api.trending('default', defaultRegion, signal);
+          page = trendingPage(trending.items || [], defaultRegion);
+        } else {
+          const filters = {
+            type: route.filters?.type || 'all',
+            sort: route.filters?.sort || 'relevance',
+            date: route.filters?.date || '',
+            duration: route.filters?.duration || '',
+            features: route.filters?.features || '',
+          };
+          const payload = await api.search(route.query, filters, signal);
+          page = searchPage(payload.query || route.query, payload.filters || filters, payload.items || []);
+        }
+        break;
       }
-      page = shortsPage(payload);
-    } else if (path.startsWith('/channel/')) {
-      const id = decodeURIComponent(path.replace('/channel/', ''));
-      const sortBy = String(query.get('sortBy') || 'newest');
-      page = channelPage({ ...(await api.channel(id, { sortBy }, signal)), sortBy });
-    } else {
-      page = notFoundPage();
+      case 'watch': {
+        const id = String(route.id || '').trim();
+        if (!id) {
+          page = notFoundPage();
+          break;
+        }
+        page = watchPage(await api.watch(id, signal));
+        break;
+      }
+      case 'shorts': {
+        const id = String(route.id || '').trim();
+        if (!id) {
+          page = notFoundPage();
+          break;
+        }
+        const payload = await api.watch(id, signal);
+        if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
+          navigate(`/watch?v=${encodeURIComponent(id)}`, { replace: true });
+          return;
+        }
+        page = shortsPage(payload);
+        break;
+      }
+      case 'channel': {
+        const id = String(route.id || '').trim();
+        if (!id) {
+          page = notFoundPage();
+          break;
+        }
+        const sortBy = String(url.searchParams.get('sortBy') || 'newest');
+        page = channelPage({ ...(await api.channel(id, { sortBy }, signal)), sortBy });
+        break;
+      }
+      default:
+        page = notFoundPage();
+        break;
     }
 
-    if (signal.aborted || token !== state.renderToken) return;
+    if (signal.aborted || renderToken !== state.renderToken) return;
+    const canonicalUrl = route.canonicalUrl || `${url.pathname}${url.search}`;
+    const currentUrlText = `${url.pathname}${url.search}`;
+    if (canonicalUrl && canonicalUrl !== currentUrlText) {
+      history.replaceState({}, '', canonicalUrl);
+    }
     app.innerHTML = page.html;
     document.title = page.title || 'AuroraTube';
     window.scrollTo(0, 0);
   } catch (error) {
-    if (signal.aborted || token !== state.renderToken) return;
+    if (signal.aborted || renderToken !== state.renderToken) return;
     app.innerHTML = `
       <div class="empty large error-state">
         <strong>${escapeHtml(error?.message || '読み込みに失敗しました')}</strong>
@@ -223,11 +229,11 @@ const render = async () => {
     `;
     document.title = 'AuroraTube';
   } finally {
-    if (token === state.renderToken) {
+    if (renderToken === state.renderToken) {
+      setLoadingState(false);
       bindSearchForm();
       bindPlayers();
     }
-    endRender();
   }
 };
 

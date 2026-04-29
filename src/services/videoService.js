@@ -182,10 +182,10 @@ export const resolveVideoContext = async (videoId) => {
 
   const playback = selectPlaybackPlan(playbackContext.video, {
     videoId,
-    allowHls: Boolean(ytdlpContext),
+    allowHls: true,
   }) || selectPlaybackPlan(metadataContext.video, {
     videoId,
-    allowHls: false,
+    allowHls: true,
   });
 
   if (!playback) {
@@ -203,10 +203,6 @@ export const resolveVideoContext = async (videoId) => {
       : null,
   };
 };
-
-const normalizeInvidiousInstance = (instance = '') => (
-  config.invidiousInstances.includes(instance) ? instance : config.invidiousInstances[0]
-);
 
 const normalizeCommentsPayload = (payload = {}) => ({
   comments: Array.isArray(payload.comments) ? payload.comments.map(normalizeComment) : [],
@@ -277,7 +273,7 @@ const contentDisposition = (title, download = false) => {
 
 const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
   const context = await resolveVideoContext(videoId);
-  const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, { videoId, allowHls: Boolean(context.provider?.kind === 'ytdlp') });
+  const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, { videoId, allowHls: true });
 
   if (!source) throw notFound('playback source not found');
 
@@ -336,8 +332,13 @@ export const fetchVideoComments = async (videoId, continuation = '') => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!isNonEmptyString(safeVideoId)) throw badRequest('video id required');
 
-  const sourceInstance = normalizeInvidiousInstance();
-  const { data } = await getCommentsFromInstance(sourceInstance, safeVideoId, continuation);
+  const { data } = await fetchFromAny(`/api/v1/comments/${encodeURIComponent(safeVideoId)}`, {
+    continuation,
+    source: 'youtube',
+    sort_by: 'top',
+    hl: config.hl,
+  });
+
   return {
     comments: Array.isArray(data?.comments) ? data.comments.map(normalizeComment) : [],
     commentCount: Number(data?.commentCount || 0),

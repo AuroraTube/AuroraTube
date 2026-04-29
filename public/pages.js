@@ -19,7 +19,7 @@ const pageShell = (body, title, query = '', active = 'home') => ({
 
       <nav class="topbar-actions" aria-label="主要ナビゲーション">
         <a class="topbar-link${active === 'home' ? ' active' : ''}" href="/">ホーム</a>
-        <a class="topbar-link${active === 'trending' ? ' active' : ''}" href="/trending">トレンド</a>
+        <a class="topbar-link${active === 'trending' ? ' active' : ''}" href="/feed/trending">トレンド</a>
       </nav>
     </header>
 
@@ -49,11 +49,6 @@ const sectionBlock = (title, items, variant = 'grid') => {
   `;
 };
 
-const channelSections = (items = []) => {
-  const channels = items.filter((item) => item.type === 'channel');
-  if (!channels.length) return '';
-  return `<section class="section-block"><div class="section-head"><h2>チャンネル</h2></div><div class="card-grid">${channels.map((item) => channelCard(item)).join('')}</div></section>`;
-};
 
 const playbackNotice = (playback = {}) => {
   const sourceUrl = String(playback.finalUrl || playback.sourceUrl || '');
