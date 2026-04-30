@@ -32,12 +32,12 @@ const extractPathData = (url) => {
     return { route: 'home', path };
   }
 
-  if ((first === 'feed' && segments[1] === 'trending') || first === 'trending') {
-    return { route: 'trending', path: first === 'trending' ? '/trending' : '/feed/trending' };
+  if (first === 'feed' && segments[1] === 'trending') {
+    return { route: 'trending', path: '/feed/trending' };
   }
 
-  if (first === 'results' || first === 'search') {
-    return { route: 'search', path: first === 'search' ? '/search' : '/results' };
+  if (first === 'results') {
+    return { route: 'search', path: '/results' };
   }
 
   if (first === 'watch') {
@@ -64,17 +64,17 @@ export const parseClientRoute = (url) => {
   const route = extractPathData(current);
 
   if (route.route === 'watch') {
-    const id = current.searchParams.get('v') || route.id || current.pathname.split('/').filter(Boolean)[1] || '';
+    const id = current.searchParams.get('v') || route.id || '';
     return { ...route, id: String(id || '').trim(), canonicalUrl: buildWatchUrl(id) };
   }
 
   if (route.route === 'shorts' || route.route === 'channel') {
-    const id = route.id || current.pathname.split('/').filter(Boolean)[1] || '';
+    const id = route.id || '';
     return { ...route, id: String(id || '').trim(), canonicalUrl: route.route === 'shorts' ? buildShortUrl(id) : buildChannelUrl(id) };
   }
 
   if (route.route === 'search') {
-    const query = String(current.searchParams.get('search_query') || current.searchParams.get('q') || '').trim();
+    const query = String(current.searchParams.get('search_query') || '').trim();
     const filters = {
       type: current.searchParams.get('type') || 'all',
       sort: current.searchParams.get('sort') || 'relevance',

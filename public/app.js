@@ -14,6 +14,7 @@ const state = {
   searchTimer: 0,
   renderToken: 0,
   renderAbort: null,
+  copyTimer: 0,
 };
 
 const locale = navigator.language || 'ja-JP';
@@ -75,6 +76,25 @@ const setButtonState = (button, label, disabled = false) => {
   button.textContent = label;
 };
 
+const copyLink = async (button) => {
+  const url = button.getAttribute('data-copy-url') || window.location.href;
+  const label = button.textContent;
+  try {
+    await navigator.clipboard.writeText(new URL(url, window.location.origin).toString());
+    button.textContent = 'コピー済み';
+    clearTimeout(state.copyTimer);
+    state.copyTimer = window.setTimeout(() => {
+      button.textContent = label;
+    }, 1200);
+  } catch {
+    button.textContent = 'コピー失敗';
+    clearTimeout(state.copyTimer);
+    state.copyTimer = window.setTimeout(() => {
+      button.textContent = label;
+    }, 1200);
+  }
+};
+
 const appendComments = async (button, signal) => {
   const videoId = button.getAttribute('data-video-id') || '';
   const continuation = button.getAttribute('data-load-comments') || '';
@@ -127,6 +147,13 @@ const bindDynamicButtons = () => {
     const channelButton = event.target.closest?.('[data-load-channel]');
     if (channelButton) {
       await appendChannelVideos(channelButton, state.renderAbort?.signal);
+      return;
+    }
+
+    const copyButton = event.target.closest?.('[data-copy-link]');
+    if (copyButton) {
+      event.preventDefault();
+      await copyLink(copyButton);
     }
   });
 };
@@ -189,8 +216,8 @@ const render = async () => {
         }
         const payload = await api.watch(id, signal);
         if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
-          navigate(`/watch?v=${encodeURIComponent(id)}`, { replace: true });
-          return;
+          page = watchPage(payload);
+          break;
         }
         page = shortsPage(payload);
         break;

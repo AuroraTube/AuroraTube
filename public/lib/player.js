@@ -1,42 +1,38 @@
-const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3];
+import { escapeHtml } from './format.js';
 
-const formatTime = (seconds) => {
-  const total = Math.max(0, Number(seconds || 0));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = Math.floor(total % 60);
-  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+const normalizeUrl = (value, fallback = '') => {
+  const text = String(value || '').trim();
+  if (text) return text;
+  return fallback;
 };
 
-const escapeAttr = (value) => String(value ?? '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
+const buildPlayerLabel = (playback = {}) => {
+  const parts = [];
+  if (playback.kind) parts.push(String(playback.kind));
+  if (playback.proxy) parts.push('proxy');
+  if (!parts.length) parts.push('player');
+  return parts.join(' · ');
+};
 
-export const playerMarkup = ({
-  videoId = '',
-  poster = '',
-  short = false,
-  playback = {},
-} = {}) => {
-  const safeVideoId = escapeAttr(videoId);
-  const playbackUrl = playback.playUrl || playback.streamUrl || (safeVideoId ? `/api/watch/${encodeURIComponent(videoId)}/stream` : '');
-  const finalUrl = playback.finalUrl || '';
-  const proxy = Boolean(playback.proxy);
+export const playerMarkup = ({ videoId, poster, short = false, playback = {} }) => {
+  const safeVideoId = String(videoId || '').trim();
+  const streamUrl = normalizeUrl(playback.streamUrl || playback.playUrl, safeVideoId ? `/api/watch/${encodeURIComponent(safeVideoId)}/stream` : '');
+  const downloadUrl = normalizeUrl(playback.downloadUrl, safeVideoId ? `/api/watch/${encodeURIComponent(safeVideoId)}/download` : '');
+  const finalUrl = normalizeUrl(playback.finalUrl, playback.sourceUrl || '');
   const warning = String(playback.warning || '');
-  const proxyLabel = proxy ? 'PROXY' : 'DIRECT';
+  const sourceLabel = buildPlayerLabel(playback);
 
   return `
-    <section class="player-frame player-shell ${short ? 'player-frame-short player-shell-short' : ''}" data-player data-video-id="${safeVideoId}" data-playback-url="${escapeAttr(playbackUrl)}" data-final-url="${escapeAttr(finalUrl)}" data-proxy="${proxy ? 'true' : 'false'}" data-warning="${escapeAttr(warning)}">
+    <section class="player-frame player-shell ${short ? 'player-frame-short player-shell-short' : ''}" data-player data-video-id="${escapeHtml(safeVideoId)}" data-stream-url="${escapeHtml(streamUrl)}" data-download-url="${escapeHtml(downloadUrl)}" data-final-url="${escapeHtml(finalUrl)}">
       <div class="player-stage">
-        <video class="player-video" playsinline preload="metadata"${poster ? ` poster="${escapeAttr(poster)}"` : ''} src="${escapeAttr(playbackUrl)}"></video>
+        <video class="player-video" playsinline preload="metadata" controlslist="nodownload noplaybackrate"${poster ? ` poster="${escapeHtml(poster)}"` : ''} src="${escapeHtml(streamUrl)}"></video>
+        <button class="player-center" type="button" data-player-play aria-label="再生">▶</button>
         <div class="player-overlay"></div>
-        <button class="player-center" type="button" data-player-play aria-label="再生/一時停止">▶</button>
         <div class="player-badges">
-          <span class="player-badge ${proxy ? 'player-badge-proxy' : 'player-badge-direct'}">${proxyLabel}</span>
-          ${warning ? `<span class="player-badge player-badge-warning">${escapeAttr(warning)}</span>` : ''}
+          <span class="player-badge player-badge-direct">${escapeHtml(sourceLabel)}</span>
+          ${warning ? `<span class="player-badge player-badge-warning">${escapeHtml(warning)}</span>` : ''}
         </div>
       </div>
 
@@ -58,9 +54,11 @@ export const playerMarkup = ({
               ${SPEEDS.map((speed) => `<option value="${speed}"${speed === 1 ? ' selected' : ''}>${speed}x</option>`).join('')}
             </select>
           </label>
-          <a class="player-icon-button" data-player-download href="${escapeAttr(playbackUrl)}" download>DL</a>
+          <a class="player-icon-button" data-player-download href="${escapeHtml(downloadUrl)}" download>ダウンロード</a>
           <button class="player-icon-button" type="button" data-player-fullscreen aria-label="全画面">全画面</button>
         </div>
+
+        <div class="player-status" data-player-status hidden></div>
       </div>
     </section>
   `;
@@ -77,16 +75,25 @@ const syncState = (root) => {
   const speed = root.querySelector('[data-player-speed]');
   const download = root.querySelector('[data-player-download]');
   const fullscreen = root.querySelector('[data-player-fullscreen]');
+  const status = root.querySelector('[data-player-status]');
 
   if (!video || root.dataset.playerMounted === 'true') return;
   root.dataset.playerMounted = 'true';
 
+  const setStatus = (message = '', visible = false) => {
+    if (!status) return;
+    status.hidden = !visible;
+    status.textContent = message;
+  };
+
   const updateTime = () => {
-    const current = formatTime(video.currentTime || 0);
-    const duration = Number.isFinite(video.duration) ? formatTime(video.duration) : '0:00';
-    if (time) time.textContent = `${current} / ${duration}`;
-    if (progress && Number.isFinite(video.duration) && video.duration > 0) {
-      progress.value = String(Math.round((video.currentTime / video.duration) * 1000));
+    const current = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const currentText = formatTime(current);
+    const durationText = formatTime(duration);
+    if (time) time.textContent = `${currentText} / ${durationText}`;
+    if (progress && duration > 0) {
+      progress.value = String(Math.round((current / duration) * 1000));
     }
   };
 
@@ -117,7 +124,7 @@ const syncState = (root) => {
         video.pause();
       }
     } catch {
-      // ignore playback errors caused by autoplay policy or network issues
+      setStatus('再生を開始できませんでした', true);
     }
   };
 
@@ -152,11 +159,6 @@ const syncState = (root) => {
     video.playbackRate = SPEEDS.includes(value) ? value : 1;
   });
 
-  download?.addEventListener('click', (event) => {
-    event.preventDefault();
-    window.location.href = download.getAttribute('href') || '#';
-  });
-
   fullscreen?.addEventListener('click', async () => {
     try {
       const target = root.querySelector('.player-stage') || root;
@@ -166,25 +168,53 @@ const syncState = (root) => {
       }
       await target.requestFullscreen?.();
     } catch {
-      // ignore fullscreen errors
+      setStatus('全画面表示を開始できませんでした', true);
     }
   });
 
-  video.addEventListener('loadedmetadata', updateTime);
+  const clearStatus = () => setStatus('', false);
+  const showBuffering = () => setStatus('読み込み中…', true);
+  const showError = () => setStatus('再生できませんでした', true);
+
+  video.addEventListener('loadedmetadata', () => {
+    clearStatus();
+    updateTime();
+  });
   video.addEventListener('timeupdate', updateTime);
   video.addEventListener('durationchange', updateTime);
-  video.addEventListener('play', updatePlayState);
+  video.addEventListener('play', () => {
+    clearStatus();
+    updatePlayState();
+  });
   video.addEventListener('pause', updatePlayState);
   video.addEventListener('ended', updatePlayState);
   video.addEventListener('volumechange', updateVolumeState);
   video.addEventListener('ratechange', () => {
     if (speed) speed.value = String(video.playbackRate || 1);
   });
+  video.addEventListener('waiting', showBuffering);
+  video.addEventListener('stalled', showBuffering);
+  video.addEventListener('canplay', clearStatus);
+  video.addEventListener('error', showError);
+
+  const downloadHref = download?.getAttribute('href') || '';
+  if (download && !downloadHref && root.dataset.downloadUrl) {
+    download.setAttribute('href', root.dataset.downloadUrl);
+  }
 
   updateTime();
   updatePlayState();
   updateVolumeState();
   if (speed) speed.value = String(video.playbackRate || 1);
+};
+
+const formatTime = (seconds) => {
+  const total = Number(seconds || 0);
+  if (!Number.isFinite(total) || total <= 0) return '0:00';
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = Math.floor(total % 60);
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
 };
 
 export const bindPlayers = () => {

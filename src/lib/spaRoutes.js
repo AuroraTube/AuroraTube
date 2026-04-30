@@ -1,4 +1,4 @@
-const SPA_PREFIXES = ['/feed/trending', '/results', '/search', '/watch', '/shorts', '/channel', '/trending'];
+const SPA_PREFIXES = ['/feed/trending', '/results', '/watch', '/shorts', '/channel'];
 
 export const isSpaRoute = (pathname = '/') => {
   const path = String(pathname || '/');

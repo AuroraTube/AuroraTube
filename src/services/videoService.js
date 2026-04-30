@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
 import { config } from '../config.js';
 import { badRequest, notFound, unavailable } from '../lib/httpError.js';
 import { normalizeCaptionTracks, normalizeThumbnails, normalizeVideoItem, pickThumbnail } from '../lib/media.js';
+import { proxyRemoteMedia, streamWithFfmpeg } from '../lib/mediaTransport.js';
 import { selectPlaybackPlan } from '../lib/playback.js';
 import { isNonEmptyString, isPlainObject } from '../lib/strings.js';
 import { extractYouTubeVideoId } from '../lib/youtube.js';
@@ -76,65 +76,6 @@ const normalizeYtDlpVideo = (raw = {}) => {
   };
 };
 
-const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
-  new Promise((resolve, reject) => {
-    const args = [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-nostdin',
-      ...(isNonEmptyString(config.ytdlpProxy) ? ['-http_proxy', config.ytdlpProxy] : []),
-      ...inputs.flatMap((input) => ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2', '-i', input]),
-      ...outputOptions,
-      '-f',
-      'mp4',
-      'pipe:1',
-    ];
-
-    const child = spawn('ffmpeg', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-      env: {
-        ...process.env,
-        ...(isNonEmptyString(config.ytdlpProxy) ? {
-          http_proxy: config.ytdlpProxy,
-          https_proxy: config.ytdlpProxy,
-          HTTP_PROXY: config.ytdlpProxy,
-          HTTPS_PROXY: config.ytdlpProxy,
-        } : {}),
-      },
-    });
-    let stderr = '';
-    let settled = false;
-
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString('utf8');
-    });
-
-    child.once('error', (error) => {
-      fail(unavailable('ffmpeg is not available', error?.message));
-    });
-
-    res.once('close', () => child.kill('SIGKILL'));
-    child.stdout.pipe(res);
-
-    child.once('close', (code) => {
-      if (settled) return;
-      settled = true;
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
-      }
-    });
-  });
-
 const getYtDlpVideo = async (videoId) => {
   const { data, command } = await fetchYtDlpJson(videoId, { proxy: config.ytdlpProxy });
   const video = normalizeYtDlpVideo(data);
@@ -143,7 +84,7 @@ const getYtDlpVideo = async (videoId) => {
       kind: 'ytdlp',
       name: 'yt-dlp',
       mode: isNonEmptyString(config.ytdlpProxy) ? 'proxy' : 'direct',
-      label: isNonEmptyString(config.ytdlpProxy) ? 'ytDlp(proxy)' : 'ytDlp(direct)',
+      label: isNonEmptyString(config.ytdlpProxy) ? 'yt-dlp (proxy)' : 'yt-dlp',
       proxy: isNonEmptyString(config.ytdlpProxy) ? config.ytdlpProxy : '',
       command,
     },
@@ -228,13 +169,15 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
   const thumbnail = pickThumbnail(thumbnails);
   const captions = Array.isArray(video?.captions) ? video.captions : normalizeCaptionTracks(video?.subtitles || video?.automatic_captions || {});
   const resolvedRelated = Array.isArray(related) && related.length ? related : Array.isArray(video?.relatedVideos) ? video.relatedVideos : [];
-  const streamUrl = playback?.playUrl || `/api/watch/${encodeURIComponent(String(video.videoId || video.id || ''))}/stream`;
+  const videoId = String(video.videoId || video.id || '');
+  const streamUrl = playback?.playUrl || `/api/watch/${encodeURIComponent(videoId)}/stream`;
+  const downloadUrl = `/api/watch/${encodeURIComponent(videoId)}/download`;
   const finalUrl = playback?.sourceUrl || '';
 
   return {
     video: {
       ...normalizeVideoItem(video),
-      videoId: String(video.videoId || video.id || ''),
+      videoId,
       thumbnail: thumbnail?.url || String(video.thumbnail || ''),
       authorThumbnails: Array.isArray(video.authorThumbnails) ? video.authorThumbnails : [],
       captions,
@@ -244,6 +187,7 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
       playback: {
         kind: playback?.kind || 'unknown',
         streamUrl,
+        downloadUrl,
         finalUrl,
         proxy: Boolean(playback?.proxy),
         warning: String(playback?.warning || ''),
@@ -259,17 +203,9 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
 };
 
 const safeDispositionName = (value) => String(value || 'video')
-  .replace(/[\\/:*?"<>|]+/g, ' ')
+  .replace(/[\/:*?"<>|]+/g, ' ')
   .replace(/\s+/g, ' ')
   .trim() || 'video';
-
-const contentDisposition = (title, download = false) => {
-  const fileName = `${safeDispositionName(title)}.mp4`;
-  const encoded = encodeURIComponent(fileName).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
-  const ascii = fileName.replace(/[^\x20-\x7E]/g, '_');
-  const mode = download ? 'attachment' : 'inline';
-  return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
-};
 
 const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
   const context = await resolveVideoContext(videoId);
@@ -279,13 +215,11 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
 
   const videoTitle = String(context.video?.title || videoId || 'video');
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDispositionName(videoTitle)}.mp4"`);
 
   if (source.kind === 'muxed' && source.sourceUrl) {
-    res.status(200);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Accept-Ranges', 'none');
-    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
-    await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
+    await proxyRemoteMedia(req, res, source.sourceUrl, { title: videoTitle, download });
     return;
   }
 
@@ -293,7 +227,6 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
-    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
     await streamWithFfmpeg(res, [source.videoUrl, source.audioUrl], ['-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
@@ -302,7 +235,6 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
-    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
     await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
