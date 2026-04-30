@@ -1,5 +1,4 @@
-import { youtubeIdPattern } from '../config.js';
-
+const YOUTUBE_ID_PATTERN = /^[a-zA-Z0-9_-]{11}$/;
 const channelHandlePattern = /^@?[a-zA-Z0-9._-]{2,}$/;
 
 const extractFromSegments = (segments) => {
@@ -7,18 +6,18 @@ const extractFromSegments = (segments) => {
     const segment = segments[index];
     if (['shorts', 'embed', 'live', 'v'].includes(segment)) {
       const candidate = segments[index + 1];
-      if (youtubeIdPattern.test(candidate || '')) return candidate;
+      if (YOUTUBE_ID_PATTERN.test(candidate || '')) return candidate;
     }
   }
   return null;
 };
 
-export const safeVideoId = (value) => (youtubeIdPattern.test(String(value || '')) ? String(value) : null);
+export const safeVideoId = (value) => (YOUTUBE_ID_PATTERN.test(String(value || '')) ? String(value) : null);
 
 export const extractYouTubeVideoId = (input) => {
   const text = String(input ?? '').trim();
   if (!text) return null;
-  if (youtubeIdPattern.test(text)) return text;
+  if (YOUTUBE_ID_PATTERN.test(text)) return text;
 
   const normalized = /^https?:\/\//i.test(text) ? text : `https://${text}`;
   let url;
@@ -33,12 +32,12 @@ export const extractYouTubeVideoId = (input) => {
 
   if (host === 'youtu.be') {
     const candidate = segments[0];
-    return youtubeIdPattern.test(candidate || '') ? candidate : null;
+    return YOUTUBE_ID_PATTERN.test(candidate || '') ? candidate : null;
   }
 
   if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
     const searchId = url.searchParams.get('v');
-    if (youtubeIdPattern.test(searchId || '')) return searchId;
+    if (YOUTUBE_ID_PATTERN.test(searchId || '')) return searchId;
     const pathId = extractFromSegments(segments);
     if (pathId) return pathId;
   }

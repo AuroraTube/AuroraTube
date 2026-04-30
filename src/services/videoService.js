@@ -1,34 +1,270 @@
+import { spawn } from 'node:child_process';
+import { config } from '../config.js';
+import { settings } from '../settings.js';
 import { badRequest, notFound, unavailable } from '../lib/httpError.js';
 import { normalizeCaptionTracks, normalizeThumbnails, normalizeVideoItem, pickThumbnail } from '../lib/media.js';
-import { proxyRemoteMedia, streamWithFfmpeg } from '../lib/mediaTransport.js';
+import { selectPlaybackPlan } from '../lib/playback.js';
 import { isNonEmptyString, isPlainObject } from '../lib/strings.js';
 import { extractYouTubeVideoId } from '../lib/youtube.js';
-import { fetchComments, resolveVideoContextOrdered } from '../lib/videoResolver.js';
+import { fetchFromAny } from '../providers/invidious.js';
+import { fetchYtDlpJson } from '../providers/ytdlp.js';
+
+const normalizeComment = (comment = {}) => ({
+  commentId: String(comment.commentId || ''),
+  author: String(comment.author || ''),
+  authorId: String(comment.authorId || ''),
+  authorUrl: String(comment.authorUrl || ''),
+  authorIsChannelOwner: Boolean(comment.authorIsChannelOwner),
+  published: Number(comment.published || 0),
+  publishedText: String(comment.publishedText || ''),
+  likeCount: Number(comment.likeCount || 0),
+  content: String(comment.content || ''),
+  contentHtml: String(comment.contentHtml || ''),
+  isEdited: Boolean(comment.isEdited),
+  isPinned: Boolean(comment.isPinned),
+  isSponsor: Boolean(comment.isSponsor),
+  sponsorIconUrl: String(comment.sponsorIconUrl || ''),
+  authorThumbnails: Array.isArray(comment.authorThumbnails) ? comment.authorThumbnails : [],
+  replies: comment.replies && isPlainObject(comment.replies)
+    ? {
+        replyCount: Number(comment.replies.replyCount || 0),
+        continuation: String(comment.replies.continuation || ''),
+      }
+    : null,
+  creatorHeart: comment.creatorHeart && isPlainObject(comment.creatorHeart)
+    ? {
+        creatorThumbnail: String(comment.creatorHeart.creatorThumbnail || ''),
+        creatorName: String(comment.creatorHeart.creatorName || ''),
+      }
+    : null,
+});
+
+const normalizeYtDlpVideo = (raw = {}) => {
+  const base = normalizeVideoItem({
+    ...raw,
+    title: String(raw.title || ''),
+    author: String(raw.uploader || raw.channel || raw.author || ''),
+    authorId: String(raw.channel_id || raw.channelId || raw.authorId || ''),
+    authorUrl: String(raw.channel_url || raw.uploader_url || raw.authorUrl || ''),
+    authorVerified: Boolean(raw.channel_is_verified || raw.uploader_verified || raw.authorVerified),
+    description: String(raw.description || ''),
+    descriptionHtml: String(raw.description_html || raw.descriptionHtml || ''),
+    videoThumbnails: normalizeThumbnails(raw.thumbnails || raw.videoThumbnails || []),
+    lengthSeconds: Number(raw.duration || raw.lengthSeconds || 0),
+    viewCount: Number(raw.view_count || raw.viewCount || 0),
+    published: Number(raw.timestamp || raw.release_timestamp || raw.published || 0),
+    publishedText: String(raw.upload_date || raw.publishedText || ''),
+    liveNow: Boolean(raw.is_live || raw.liveNow),
+    isUpcoming: Boolean(raw.is_upcoming || raw.isUpcoming),
+    isListed: raw.isListed === undefined ? true : Boolean(raw.isListed),
+    isFamilyFriendly: raw.age_limit === 0 ? true : Boolean(raw.is_family_friendly ?? raw.isFamilyFriendly ?? true),
+    genre: String(raw.category || raw.genre || (Array.isArray(raw.categories) ? raw.categories[0] : '')),
+    keywords: Array.isArray(raw.tags) ? raw.tags : Array.isArray(raw.keywords) ? raw.keywords : [],
+    chapters: Array.isArray(raw.chapters) ? raw.chapters : [],
+    captions: normalizeCaptionTracks(raw.subtitles || raw.automatic_captions || {}),
+  });
+
+  return {
+    ...base,
+    formats: Array.isArray(raw.formats) ? raw.formats : [],
+    formatStreams: Array.isArray(raw.formatStreams) ? raw.formatStreams : [],
+    adaptiveFormats: Array.isArray(raw.adaptiveFormats) ? raw.adaptiveFormats : [],
+    hlsUrl: String(raw.hlsUrl || raw.hls_url || ''),
+    dashUrl: String(raw.dashUrl || raw.dash_url || ''),
+    thumbnail: pickThumbnail(raw.thumbnails || raw.videoThumbnails || [])?.url || base.thumbnail || '',
+    authorThumbnails: Array.isArray(raw.authorThumbnails) ? raw.authorThumbnails : [],
+    relatedVideos: Array.isArray(raw.related_videos) ? raw.related_videos.map((item) => normalizeVideoItem(item)) : [],
+  };
+};
+
+const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
+  new Promise((resolve, reject) => {
+    const args = [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-nostdin',
+      ...(isNonEmptyString(config.proxyUrl) ? ['-http_proxy', config.proxyUrl] : []),
+      ...inputs.flatMap((input) => ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2', '-i', input]),
+      ...outputOptions,
+      '-f',
+      'mp4',
+      'pipe:1',
+    ];
+
+    const child = spawn('ffmpeg', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: {
+        ...process.env,
+        ...(isNonEmptyString(config.proxyUrl) ? {
+          http_proxy: config.proxyUrl,
+          https_proxy: config.proxyUrl,
+          HTTP_PROXY: config.proxyUrl,
+          HTTPS_PROXY: config.proxyUrl,
+        } : {}),
+      },
+    });
+    let stderr = '';
+    let settled = false;
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+
+    child.once('error', (error) => {
+      fail(unavailable('ffmpeg is not available', error?.message));
+    });
+
+    res.once('close', () => child.kill('SIGKILL'));
+    child.stdout.pipe(res);
+
+    child.once('close', (code) => {
+      if (settled) return;
+      settled = true;
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(unavailable('ffmpeg failed', stderr.trim() || `exit code ${code}`));
+      }
+    });
+  });
+
+const getYtDlpVideo = async (videoId, { proxy = config.proxyUrl } = {}) => {
+  const { data, command } = await fetchYtDlpJson(videoId, { proxy });
+  const video = normalizeYtDlpVideo(data);
+  return {
+    provider: {
+      kind: 'ytdlp',
+      name: 'yt-dlp',
+      mode: isNonEmptyString(proxy) ? 'proxy' : 'direct',
+      label: isNonEmptyString(proxy) ? 'ytDlp(proxy)' : 'ytDlp(direct)',
+      proxy: isNonEmptyString(proxy) ? proxy : '',
+      command,
+    },
+    video,
+    related: video.relatedVideos,
+  };
+};
+
+const getInvidiousVideo = async (videoId) => {
+  const { instance, data } = await fetchFromAny(`/api/v1/videos/${encodeURIComponent(videoId)}`, { region: settings.region, hl: settings.hl });
+  return {
+    provider: { kind: 'invidious', name: 'invidious', instance, label: 'Invidious' },
+    video: data,
+    related: Array.isArray(data?.recommendedVideos) ? data.recommendedVideos : [],
+  };
+};
+
+const selectPlaybackForContext = (context, videoId) => {
+  if (!context?.video) return null;
+  return selectPlaybackPlan(context.video, {
+    videoId,
+    allowHls: context.provider?.kind === 'ytdlp',
+  });
+};
+
+const resolveVideoContext = async (videoId) => {
+  const errors = [];
+
+  if (isNonEmptyString(config.proxyUrl)) {
+    try {
+      const context = await getYtDlpVideo(videoId, { proxy: config.proxyUrl });
+      const playback = selectPlaybackForContext(context, videoId);
+      if (playback) {
+        return {
+          provider: context.provider,
+          video: context.video,
+          playbackVideo: context.video,
+          playback,
+          related: context.related,
+        };
+      }
+      errors.push('yt-dlp(proxy): playback source not found');
+    } catch (error) {
+      errors.push(`yt-dlp(proxy): ${error?.message || String(error)}`);
+    }
+  }
+
+  try {
+    const context = await getInvidiousVideo(videoId);
+    const playback = selectPlaybackForContext(context, videoId);
+    if (playback) {
+      return {
+        provider: context.provider,
+        video: context.video,
+        playbackVideo: context.video,
+        playback,
+        related: context.related,
+      };
+    }
+    errors.push('invidious: playback source not found');
+  } catch (error) {
+    errors.push(`invidious: ${error?.message || String(error)}`);
+  }
+
+  try {
+    const context = await getYtDlpVideo(videoId, { proxy: '' });
+    const playback = selectPlaybackForContext(context, videoId);
+    if (playback) {
+      return {
+        provider: context.provider,
+        video: context.video,
+        playbackVideo: context.video,
+        playback,
+        related: context.related,
+      };
+    }
+    errors.push('yt-dlp(direct): playback source not found');
+  } catch (error) {
+    errors.push(`yt-dlp(direct): ${error?.message || String(error)}`);
+  }
+
+  throw unavailable('video retrieval failed', errors);
+};
+
+const fetchCommentsPayload = async (videoId, continuation = '') => {
+  const { data } = await fetchFromAny(`/api/v1/comments/${encodeURIComponent(videoId)}`, {
+    continuation,
+    source: 'youtube',
+    sort_by: 'top',
+    hl: settings.hl,
+  });
+
+  return {
+    comments: Array.isArray(data?.comments) ? data.comments.map(normalizeComment) : [],
+    commentCount: Number(data?.commentCount || 0),
+    continuation: String(data?.continuation || ''),
+  };
+};
 
 const buildPlayerPayload = ({ video, provider, playback, comments, related }) => {
   const thumbnails = Array.isArray(video?.videoThumbnails) && video.videoThumbnails.length ? video.videoThumbnails : normalizeThumbnails(video?.thumbnails || []);
   const thumbnail = pickThumbnail(thumbnails);
   const captions = Array.isArray(video?.captions) ? video.captions : normalizeCaptionTracks(video?.subtitles || video?.automatic_captions || {});
   const resolvedRelated = Array.isArray(related) && related.length ? related : Array.isArray(video?.relatedVideos) ? video.relatedVideos : [];
-  const videoId = String(video?.videoId || video?.id || '');
-  const streamUrl = playback?.playUrl || `/api/watch/${encodeURIComponent(videoId)}/stream`;
-  const downloadUrl = `/api/watch/${encodeURIComponent(videoId)}/download`;
+  const streamUrl = playback?.playUrl || `/api/watch/${encodeURIComponent(String(video.videoId || video.id || ''))}/stream`;
   const finalUrl = playback?.sourceUrl || '';
 
   return {
     video: {
       ...normalizeVideoItem(video),
-      videoId,
-      thumbnail: thumbnail?.url || String(video?.thumbnail || ''),
-      authorThumbnails: Array.isArray(video?.authorThumbnails) ? video.authorThumbnails : [],
+      videoId: String(video.videoId || video.id || ''),
+      thumbnail: thumbnail?.url || String(video.thumbnail || ''),
+      authorThumbnails: Array.isArray(video.authorThumbnails) ? video.authorThumbnails : [],
       captions,
-      chapters: Array.isArray(video?.chapters) ? video.chapters : [],
+      chapters: Array.isArray(video.chapters) ? video.chapters : [],
       commentsCount: Number(comments?.commentCount || 0),
-      sourceLabel: provider?.label || provider?.name || '',
+      sourceLabel: provider.label || provider.name || '',
       playback: {
         kind: playback?.kind || 'unknown',
         streamUrl,
-        downloadUrl,
         finalUrl,
         proxy: Boolean(playback?.proxy),
         warning: String(playback?.warning || ''),
@@ -44,23 +280,36 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
 };
 
 const safeDispositionName = (value) => String(value || 'video')
-  .replace(/[\/:*?"<>|]+/g, ' ')
+  .replace(/[\\/:*?"<>|]+/g, ' ')
   .replace(/\s+/g, ' ')
   .trim() || 'video';
 
-const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
-  const context = await resolveVideoContextOrdered(videoId);
-  const source = context.playback;
+const contentDisposition = (title, download = false) => {
+  const fileName = `${safeDispositionName(title)}.mp4`;
+  const encoded = encodeURIComponent(fileName).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  const ascii = fileName.replace(/[^\x20-\x7E]/g, '_');
+  const mode = download ? 'attachment' : 'inline';
+  return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+};
+
+const sendPlayback = async (res, videoId, { download = false } = {}) => {
+  const context = await resolveVideoContext(videoId);
+  const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, {
+    videoId,
+    allowHls: Boolean(context.provider?.kind === 'ytdlp'),
+  });
 
   if (!source) throw notFound('playback source not found');
 
   const videoTitle = String(context.video?.title || videoId || 'video');
   res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDispositionName(videoTitle)}.mp4"`);
 
   if (source.kind === 'muxed' && source.sourceUrl) {
-    await proxyRemoteMedia(req, res, source.sourceUrl, { title: videoTitle, download });
+    res.status(200);
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
+    await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
 
@@ -68,6 +317,7 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
     await streamWithFfmpeg(res, [source.videoUrl, source.audioUrl], ['-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
@@ -76,6 +326,7 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Disposition', contentDisposition(videoTitle, download));
     await streamWithFfmpeg(res, [source.sourceUrl], ['-map', '0:v:0', '-map', '0:a:0?', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
     return;
   }
@@ -83,14 +334,26 @@ const sendPlayback = async (req, res, videoId, { download = false } = {}) => {
   throw unavailable('unsupported playback source');
 };
 
+const fetchInitialComments = async (videoId) => {
+  try {
+    return await fetchCommentsPayload(videoId);
+  } catch {
+    return {
+      comments: [],
+      commentCount: 0,
+      continuation: '',
+    };
+  }
+};
+
 export const fetchVideoPage = async (videoId) => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!safeVideoId) throw badRequest('video id required');
 
-  const context = await resolveVideoContextOrdered(safeVideoId);
+  const context = await resolveVideoContext(safeVideoId);
   if (!isPlainObject(context.video)) throw unavailable('video response was not an object');
 
-  const comments = await fetchComments(context.commentsProvider, safeVideoId);
+  const comments = await fetchInitialComments(safeVideoId);
 
   return buildPlayerPayload({
     video: context.video,
@@ -104,14 +367,13 @@ export const fetchVideoPage = async (videoId) => {
 export const fetchVideoComments = async (videoId, continuation = '') => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!isNonEmptyString(safeVideoId)) throw badRequest('video id required');
-
-  return fetchComments(null, safeVideoId, continuation);
+  return fetchCommentsPayload(safeVideoId, continuation);
 };
 
-export const streamVideo = async (req, res, videoId) => {
-  await sendPlayback(req, res, videoId, { download: false });
+export const streamVideo = async (_req, res, videoId) => {
+  await sendPlayback(res, videoId, { download: false });
 };
 
-export const downloadVideo = async (req, res, videoId) => {
-  await sendPlayback(req, res, videoId, { download: true });
+export const downloadVideo = async (_req, res, videoId) => {
+  await sendPlayback(res, videoId, { download: true });
 };

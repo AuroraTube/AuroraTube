@@ -1,6 +1,5 @@
-import { buildChannelUrl, buildWatchUrl } from './lib/routes.js';
 import { escapeHtml, formatCompactNumber, formatDuration, formatNumber, textBlock } from './lib/format.js';
-import { avatar, channelCard, commentCard, videoCard } from './lib/cards.js';
+import { avatar, channelCard, commentCard, isShortVideo, videoCard } from './lib/cards.js';
 import { thumbnailUrl } from './lib/images.js';
 import { playerMarkup } from './lib/player.js';
 
@@ -20,7 +19,7 @@ const pageShell = (body, title, query = '', active = 'home') => ({
 
       <nav class="topbar-actions" aria-label="主要ナビゲーション">
         <a class="topbar-link${active === 'home' ? ' active' : ''}" href="/">ホーム</a>
-        <a class="topbar-link${active === 'trending' ? ' active' : ''}" href="/feed/trending">トレンド</a>
+        <a class="topbar-link${active === 'trending' ? ' active' : ''}" href="/trending">トレンド</a>
       </nav>
     </header>
 
@@ -42,13 +41,18 @@ const splitVideos = (items = []) => {
 
 const sectionBlock = (title, items, variant = 'grid') => {
   if (!items.length) return '';
-  const sectionClass = variant === 'short-grid' ? 'short-grid' : 'video-grid';
   return `
     <section class="section-block">
       <div class="section-head"><h2>${escapeHtml(title)}</h2></div>
-      <section class="${sectionClass}">${items.map((item) => videoCard(item, variant === 'short-grid' ? 'short' : 'grid')).join('')}</section>
+      <section class="${variant}">${items.map((item) => videoCard(item, variant === 'short-grid' ? 'short' : 'grid')).join('')}</section>
     </section>
   `;
+};
+
+const channelSections = (items = []) => {
+  const channels = items.filter((item) => item.type === 'channel');
+  if (!channels.length) return '';
+  return `<section class="section-block"><div class="section-head"><h2>チャンネル</h2></div><div class="card-grid">${channels.map((item) => channelCard(item)).join('')}</div></section>`;
 };
 
 const playbackNotice = (playback = {}) => {
@@ -58,31 +62,13 @@ const playbackNotice = (playback = {}) => {
   return `
     <section class="playback-note ${proxy ? 'is-proxied' : 'is-direct'}">
       <div>
-        <strong>${proxy ? 'ローカル再生' : '直接参照'}</strong>
-        <p>${escapeHtml(proxy ? '動画はローカル経由で配信されます。' : playback.warning || 'ソース URL を直接参照しています。')}</p>
+        <strong>${proxy ? 'プロキシ再生' : '直接参照'}</strong>
+        <p>${escapeHtml(proxy ? '再生はローカル経由です。' : playback.warning || '最終 URL は Google CDN を直接参照します。')}</p>
       </div>
       <code title="${escapeHtml(sourceUrl)}">${escapeHtml(sourceUrl)}</code>
     </section>
   `;
 };
-
-const watchActions = (videoId, playback = {}) => {
-  if (!videoId) return '';
-  const watchUrl = buildWatchUrl(videoId);
-  const downloadUrl = playback.downloadUrl || `/api/watch/${encodeURIComponent(videoId)}/download`;
-  return `
-    <div class="watch-actions">
-      <a class="action-pill action-pill-primary" href="${escapeHtml(downloadUrl)}" data-player-download>ダウンロード</a>
-      <button class="action-pill" type="button" data-copy-link data-copy-url="${escapeHtml(watchUrl)}">リンクをコピー</button>
-    </div>
-  `;
-};
-
-const relatedRail = (items = []) => `
-  <div class="related-rail">
-    ${items.map((item) => videoCard(item, 'row')).join('') || '<div class="empty">関連動画がありません</div>'}
-  </div>
-`;
 
 export const homePage = (trending, region = 'US') => {
   const { shorts, videos } = splitVideos(trending || []);
@@ -149,55 +135,49 @@ export const watchPage = (payload = {}) => {
   const videoId = String(v.videoId || '');
   const poster = thumbnailUrl(v.thumbnail || '');
   const playback = v.playback || {};
-  const relatedItems = related.length ? related : [];
 
   return pageShell(`
-    <article class="watch-layout">
-      <section class="watch-main">
-        ${playerMarkup({ videoId, poster, short: false, playback })}
+    <article class="viewer">
+      ${playerMarkup({ videoId, poster, short: false, playback })}
 
-        <section class="watch-meta-card">
-          <div class="watch-headline">
-            <p class="eyebrow">視聴</p>
-            <h1 class="watch-title">${escapeHtml(v.title || '')}</h1>
-          </div>
+      <section class="viewer-head">
+        <div>
+          <p class="eyebrow">視聴</p>
+          <h1 class="watch-title">${escapeHtml(v.title || '')}</h1>
           <div class="watch-meta-row">
             <div class="watch-stats">
               <span>${v.viewCount ? `${formatCompactNumber(v.viewCount)} 回視聴` : '0 回視聴'}</span>
               <span>${v.publishedText ? escapeHtml(v.publishedText) : ''}</span>
               ${v.lengthSeconds ? `<span>${formatDuration(v.lengthSeconds)}</span>` : ''}
             </div>
-            ${playbackNotice(playback)}
           </div>
-          ${watchActions(videoId, playback)}
-        </section>
-
-        <a class="channel-strip" href="${v.authorId ? buildChannelUrl(v.authorId) : '#'}">
-          <span class="channel-avatar">${avatar(v.authorThumbnails || [])}</span>
-          <span class="channel-info">
-            <strong class="channel-name">${escapeHtml(v.author || '')}</strong>
-            <span class="channel-submeta">${escapeHtml(v.authorId || '')}</span>
-          </span>
-        </a>
-
-        ${v.description ? `<section class="description-card"><div class="description">${textBlock(v.description)}</div></section>` : ''}
-
-        <section class="comments-section">
-          <div class="section-head">
-            <h2>コメント</h2>
-            <span class="count">${formatNumber(v.commentsCount || comments.length)} 件</span>
-          </div>
-          <div class="comments" data-comments>${comments.map((comment) => commentCard(comment)).join('') || '<div class="empty">コメントがありません</div>'}</div>
-          ${payload.commentsContinuation ? `<button class="ghost-btn load-more" type="button" data-load-comments="${escapeHtml(payload.commentsContinuation)}" data-video-id="${escapeHtml(v.videoId || '')}">さらに表示</button>` : ''}
-        </section>
+        </div>
+        ${playbackNotice(playback)}
       </section>
 
-      <aside class="watch-sidebar">
-        <div class="section-head sidebar-head">
-          <h2>関連動画</h2>
+      <a class="channel-strip" href="${v.authorId ? `/channel/${encodeURIComponent(v.authorId)}` : '#'}">
+        <span class="channel-avatar">${avatar(v.authorThumbnails || [])}</span>
+        <span class="channel-info">
+          <strong class="channel-name">${escapeHtml(v.author || '')}</strong>
+          <span class="channel-submeta">${escapeHtml(v.authorId || '')}</span>
+        </span>
+      </a>
+
+      ${v.description ? `<section class="description-card"><div class="description">${textBlock(v.description)}</div></section>` : ''}
+
+      <section class="comments-section">
+        <div class="section-head">
+          <h2>コメント</h2>
+          <span class="count">${formatNumber(v.commentsCount || comments.length)} 件</span>
         </div>
-        ${relatedRail(relatedItems)}
-      </aside>
+        <div class="comments" data-comments>${comments.map((comment) => commentCard(comment)).join('') || '<div class="empty">コメントがありません</div>'}</div>
+        ${payload.commentsContinuation ? `<button class="ghost-btn load-more" type="button" data-load-comments="${escapeHtml(payload.commentsContinuation)}" data-video-id="${escapeHtml(v.videoId || '')}">さらに表示</button>` : ''}
+      </section>
+
+      <section class="section-block">
+        <div class="section-head"><h2>関連動画</h2></div>
+        <div class="related-grid">${related.map((item) => videoCard(item, 'row')).join('') || '<div class="empty">関連動画がありません</div>'}</div>
+      </section>
     </article>
   `, `${v.title || 'Watch'} - AuroraTube`, '', 'watch');
 };
@@ -213,21 +193,21 @@ export const shortsPage = (payload = {}) => {
     <article class="viewer viewer-short">
       ${playerMarkup({ videoId, poster, short: true, playback })}
 
-      <section class="watch-meta-card short-meta-card">
-        <div class="watch-headline">
+      <section class="viewer-head">
+        <div>
           <p class="eyebrow">ショート</p>
           <h1 class="watch-title">${escapeHtml(v.title || '')}</h1>
-        </div>
-        <div class="watch-meta-row">
-          <div class="watch-stats">
-            <span>${v.viewCount ? `${formatCompactNumber(v.viewCount)} 回視聴` : '0 回視聴'}</span>
-            ${v.lengthSeconds ? `<span>${formatDuration(v.lengthSeconds)}</span>` : ''}
+          <div class="watch-meta-row">
+            <div class="watch-stats">
+              <span>${v.viewCount ? `${formatCompactNumber(v.viewCount)} 回視聴` : '0 回視聴'}</span>
+              ${v.lengthSeconds ? `<span>${formatDuration(v.lengthSeconds)}</span>` : ''}
+            </div>
           </div>
-          ${playbackNotice(playback)}
         </div>
+        ${playbackNotice(playback)}
       </section>
 
-      <a class="channel-strip" href="${v.authorId ? buildChannelUrl(v.authorId) : '#'}">
+      <a class="channel-strip" href="${v.authorId ? `/channel/${encodeURIComponent(v.authorId)}` : '#'}">
         <span class="channel-avatar">${avatar(v.authorThumbnails || [])}</span>
         <span class="channel-info">
           <strong class="channel-name">${escapeHtml(v.author || '')}</strong>

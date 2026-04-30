@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { config } from '../config.js';
+import { settings } from '../settings.js';
 import { badRequest, unavailable } from '../lib/httpError.js';
 import { assertSafeHttpUrl, resolveRedirectTarget } from '../lib/urlSafety.js';
 
@@ -26,7 +26,7 @@ export const streamThumbnail = async (res, inputUrl) => {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), settings.requestTimeoutMs);
 
   try {
     let currentUrl = url.toString();

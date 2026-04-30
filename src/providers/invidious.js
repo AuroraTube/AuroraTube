@@ -1,4 +1,4 @@
-import { config } from '../config.js';
+import { settings } from '../settings.js';
 import { badRequest, notFound, unavailable } from '../lib/httpError.js';
 import { isNonEmptyString, isPlainObject } from '../lib/strings.js';
 
@@ -8,11 +8,11 @@ const ACTIVE_BAD_TTL_MS = 5 * 60 * 1000;
 
 const availableInstances = () => {
   const now = Date.now();
-  const filtered = config.invidiousInstances.filter((instance) => {
+  const filtered = settings.invidiousInstances.filter((instance) => {
     const marked = badInstances.get(instance);
     return !marked || now - marked > ACTIVE_BAD_TTL_MS;
   });
-  return filtered.length ? filtered : config.invidiousInstances;
+  return filtered.length ? filtered : settings.invidiousInstances;
 };
 
 const rotateInstances = () => {
@@ -51,7 +51,7 @@ const shouldFailover = (error) => {
 };
 
 export const fetchJsonFromInstance = async (instance, path, query = {}, options = {}) => {
-  const timeoutMs = Number(options.timeoutMs || config.requestTimeoutMs);
+  const timeoutMs = Number(options.timeoutMs || settings.requestTimeoutMs);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -131,8 +131,8 @@ export const searchInvidious = async (query, filters = {}) => {
     duration: filters.duration || '',
     type: filters.type || 'all',
     features: filters.features || '',
-    region: filters.region || config.region,
-    hl: filters.hl || config.hl,
+    region: filters.region || settings.region,
+    hl: filters.hl || settings.hl,
   });
 };
 
@@ -141,12 +141,12 @@ export const searchSuggestions = async (query) => {
   return tryAcrossInstances('/api/v1/search/suggestions', { q: query });
 };
 
-export const getTrending = async (type = 'default', region = config.region) =>
-  tryAcrossInstances('/api/v1/trending', { type, region, hl: config.hl });
+export const getTrending = async (type = 'default', region = settings.region) =>
+  tryAcrossInstances('/api/v1/trending', { type, region, hl: settings.hl });
 
 export const getVideoFromInstance = async (instance, videoId) => {
   if (!isNonEmptyString(videoId)) throw badRequest('videoId required');
-  const data = await fetchJsonFromInstance(instance, `/api/v1/videos/${encodeURIComponent(videoId)}`, { region: config.region, hl: config.hl });
+  const data = await fetchJsonFromInstance(instance, `/api/v1/videos/${encodeURIComponent(videoId)}`, { region: settings.region, hl: settings.hl });
   return { instance, data };
 };
 
@@ -156,7 +156,7 @@ export const getCommentsFromInstance = async (instance, videoId, continuation = 
     continuation,
     source: 'youtube',
     sort_by: 'top',
-    hl: config.hl,
+    hl: settings.hl,
   });
   return { instance, data };
 };
@@ -166,7 +166,7 @@ export const getChannelVideos = async (instance, channelId, { continuation = '',
   return fetchJsonFromInstance(instance, `/api/v1/channels/${encodeURIComponent(channelId)}/videos`, {
     continuation,
     sort_by: sortBy,
-    hl: config.hl,
+    hl: settings.hl,
   });
 };
 
@@ -175,7 +175,7 @@ export const getChannelPlaylists = async (instance, channelId, { continuation = 
   return fetchJsonFromInstance(instance, `/api/v1/channels/${encodeURIComponent(channelId)}/playlists`, {
     continuation,
     sort_by: sortBy,
-    hl: config.hl,
+    hl: settings.hl,
   });
 };
 
@@ -183,6 +183,6 @@ export const getChannelRelated = async (instance, channelId, continuation = '') 
   if (!isNonEmptyString(channelId)) throw badRequest('channelId required');
   return fetchJsonFromInstance(instance, `/api/v1/channels/${encodeURIComponent(channelId)}/channels`, {
     continuation,
-    hl: config.hl,
+    hl: settings.hl,
   });
 };

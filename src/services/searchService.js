@@ -1,4 +1,4 @@
-import { config } from '../config.js';
+import { settings } from '../settings.js';
 import { badRequest } from '../lib/httpError.js';
 import { fetchFromAny, getTrending, searchInvidious } from '../providers/invidious.js';
 import { normalizeSearchItem, normalizeVideoItem } from '../lib/media.js';
@@ -13,13 +13,13 @@ export const fetchSearchPage = async (query, filters = {}) => {
     duration: filters.duration || '',
     type: filters.type || 'all',
     features: filters.features || '',
-    region: filters.region || config.region,
-    hl: filters.hl || config.hl,
+    region: filters.region || settings.region,
+    hl: filters.hl || settings.hl,
   });
   return Array.isArray(data) ? data.map((item) => normalizeSearchItem(item)) : [];
 };
 
-export const fetchTrendingPage = async (type = 'default', region = config.region) => {
+export const fetchTrendingPage = async (type = 'default', region = settings.region) => {
   const { data } = await getTrending(type, region);
   return Array.isArray(data) ? data.map((item) => normalizeVideoItem(item)) : [];
 };

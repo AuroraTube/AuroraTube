@@ -5,7 +5,6 @@ import { commentCard, videoCard } from './lib/cards.js';
 import { homePage, searchPage, shortsPage, trendingPage, watchPage, channelPage, notFoundPage } from './pages.js';
 import { setLoadingState } from './lib/ui.js';
 import { bindPlayers } from './lib/player.js';
-import { buildSearchUrl, parseClientRoute } from './lib/routes.js';
 
 const app = document.getElementById('app');
 
@@ -14,14 +13,23 @@ const state = {
   searchTimer: 0,
   renderToken: 0,
   renderAbort: null,
-  renderTimer: 0,
-  copyTimer: 0,
+  activeRenders: 0,
 };
-
-const RENDER_TIMEOUT_MS = 15000;
 
 const locale = navigator.language || 'ja-JP';
 const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
+
+const readSearchParams = () => currentUrl().searchParams;
+
+const buildSearchUrl = (params = {}) => {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === '') continue;
+    search.set(key, String(value));
+  }
+  const query = search.toString();
+  return query ? `/search?${query}` : '/search';
+};
 
 const bindSearchForm = () => {
   const form = document.getElementById('search-form');
@@ -33,8 +41,7 @@ const bindSearchForm = () => {
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const query = input.value.trim();
-    navigate(query ? buildSearchUrl(query) : '/feed/trending');
+    navigate(buildSearchUrl({ q: input.value.trim() }));
   });
 
   input.addEventListener('input', () => {
@@ -70,32 +77,13 @@ const bindSearchForm = () => {
     const button = event.target.closest?.('[data-suggestion]');
     if (!button) return;
     const value = button.getAttribute('data-suggestion') || '';
-    navigate(buildSearchUrl(value));
+    navigate(buildSearchUrl({ q: value }));
   });
 };
 
 const setButtonState = (button, label, disabled = false) => {
   button.disabled = disabled;
   button.textContent = label;
-};
-
-const copyLink = async (button) => {
-  const url = button.getAttribute('data-copy-url') || window.location.href;
-  const label = button.textContent;
-  try {
-    await navigator.clipboard.writeText(new URL(url, window.location.origin).toString());
-    button.textContent = 'コピー済み';
-    clearTimeout(state.copyTimer);
-    state.copyTimer = window.setTimeout(() => {
-      button.textContent = label;
-    }, 1200);
-  } catch {
-    button.textContent = 'コピー失敗';
-    clearTimeout(state.copyTimer);
-    state.copyTimer = window.setTimeout(() => {
-      button.textContent = label;
-    }, 1200);
-  }
 };
 
 const appendComments = async (button, signal) => {
@@ -150,122 +138,83 @@ const bindDynamicButtons = () => {
     const channelButton = event.target.closest?.('[data-load-channel]');
     if (channelButton) {
       await appendChannelVideos(channelButton, state.renderAbort?.signal);
-      return;
-    }
-
-    const copyButton = event.target.closest?.('[data-copy-link]');
-    if (copyButton) {
-      event.preventDefault();
-      await copyLink(copyButton);
     }
   });
 };
 
+const beginRender = () => {
+  state.activeRenders += 1;
+  setLoadingState(true);
+};
+
+const endRender = () => {
+  state.activeRenders = Math.max(0, state.activeRenders - 1);
+  if (state.activeRenders === 0) {
+    setLoadingState(false);
+  }
+};
+
 const render = async () => {
-  const renderToken = ++state.renderToken;
+  const token = ++state.renderToken;
   state.renderAbort?.abort?.();
   state.renderAbort = new AbortController();
   const { signal } = state.renderAbort;
 
-  clearTimeout(state.renderTimer);
-  state.renderTimer = window.setTimeout(() => {
-    if (renderToken !== state.renderToken) return;
-    state.renderAbort?.abort?.();
-    app.innerHTML = `
-      <div class="empty large error-state">
-        <strong>読み込みがタイムアウトしました</strong>
-        <span>通信先が応答しませんでした。</span>
-      </div>
-    `;
-    document.title = 'AuroraTube';
-    setLoadingState(false);
-  }, RENDER_TIMEOUT_MS);
-
-  setLoadingState(true);
+  beginRender();
 
   const url = currentUrl();
-  const route = parseClientRoute(url);
+  const path = url.pathname;
+  const query = readSearchParams();
 
   try {
     let page;
-    switch (route.route) {
-      case 'home': {
-        const trending = await api.trending('default', defaultRegion, signal);
-        page = homePage(trending.items || [], defaultRegion);
-        break;
-      }
-      case 'trending': {
+    if (path === '/' || path === '') {
+      const trending = await api.trending('default', defaultRegion, signal);
+      page = homePage(trending.items || [], defaultRegion);
+    } else if (path === '/trending') {
+      const trending = await api.trending('default', defaultRegion, signal);
+      page = trendingPage(trending.items || [], defaultRegion);
+    } else if (path === '/search') {
+      const q = String(query.get('q') || '').trim();
+      if (!q) {
         const trending = await api.trending('default', defaultRegion, signal);
         page = trendingPage(trending.items || [], defaultRegion);
-        break;
+      } else {
+        const filters = {
+          type: query.get('type') || 'all',
+          sort: query.get('sort') || 'relevance',
+          date: query.get('date') || '',
+          duration: query.get('duration') || '',
+          features: query.get('features') || '',
+        };
+        const payload = await api.search(q, filters, signal);
+        page = searchPage(payload.query || q, payload.filters || filters, payload.items || []);
       }
-      case 'search': {
-        if (!route.query) {
-          const trending = await api.trending('default', defaultRegion, signal);
-          page = trendingPage(trending.items || [], defaultRegion);
-        } else {
-          const filters = {
-            type: route.filters?.type || 'all',
-            sort: route.filters?.sort || 'relevance',
-            date: route.filters?.date || '',
-            duration: route.filters?.duration || '',
-            features: route.filters?.features || '',
-          };
-          const payload = await api.search(route.query, filters, signal);
-          page = searchPage(payload.query || route.query, payload.filters || filters, payload.items || []);
-        }
-        break;
+    } else if (path.startsWith('/watch/')) {
+      const id = decodeURIComponent(path.replace('/watch/', ''));
+      page = watchPage(await api.watch(id, signal));
+    } else if (path.startsWith('/shorts/')) {
+      const id = decodeURIComponent(path.replace('/shorts/', ''));
+      const payload = await api.watch(id, signal);
+      if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
+        navigate(`/watch/${encodeURIComponent(id)}`, { replace: true });
+        return;
       }
-      case 'watch': {
-        const id = String(route.id || '').trim();
-        if (!id) {
-          page = notFoundPage();
-          break;
-        }
-        page = watchPage(await api.watch(id, signal));
-        break;
-      }
-      case 'shorts': {
-        const id = String(route.id || '').trim();
-        if (!id) {
-          page = notFoundPage();
-          break;
-        }
-        const payload = await api.watch(id, signal).catch(() => null);
-        if (!payload?.video) {
-          page = notFoundPage();
-          break;
-        }
-        const lengthSeconds = Number(payload.video.lengthSeconds || 0);
-        page = lengthSeconds > 0 && lengthSeconds <= 60 ? shortsPage(payload) : watchPage(payload);
-        break;
-      }
-      case 'channel': {
-        const id = String(route.id || '').trim();
-        if (!id) {
-          page = notFoundPage();
-          break;
-        }
-        const sortBy = String(url.searchParams.get('sortBy') || 'newest');
-        page = channelPage({ ...(await api.channel(id, { sortBy }, signal)), sortBy });
-        break;
-      }
-      default:
-        page = notFoundPage();
-        break;
+      page = shortsPage(payload);
+    } else if (path.startsWith('/channel/')) {
+      const id = decodeURIComponent(path.replace('/channel/', ''));
+      const sortBy = String(query.get('sortBy') || 'newest');
+      page = channelPage({ ...(await api.channel(id, { sortBy }, signal)), sortBy });
+    } else {
+      page = notFoundPage();
     }
 
-    if (signal.aborted || renderToken !== state.renderToken) return;
-    const canonicalUrl = route.canonicalUrl || `${url.pathname}${url.search}`;
-    const currentUrlText = `${url.pathname}${url.search}`;
-    if (canonicalUrl && canonicalUrl !== currentUrlText) {
-      history.replaceState({}, '', canonicalUrl);
-    }
+    if (signal.aborted || token !== state.renderToken) return;
     app.innerHTML = page.html;
     document.title = page.title || 'AuroraTube';
     window.scrollTo(0, 0);
   } catch (error) {
-    if (signal.aborted || renderToken !== state.renderToken) return;
+    if (signal.aborted || token !== state.renderToken) return;
     app.innerHTML = `
       <div class="empty large error-state">
         <strong>${escapeHtml(error?.message || '読み込みに失敗しました')}</strong>
@@ -274,12 +223,11 @@ const render = async () => {
     `;
     document.title = 'AuroraTube';
   } finally {
-    clearTimeout(state.renderTimer);
-    if (renderToken === state.renderToken) {
-      setLoadingState(false);
+    if (token === state.renderToken) {
       bindSearchForm();
       bindPlayers();
     }
+    endRender();
   }
 };
 

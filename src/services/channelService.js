@@ -1,4 +1,4 @@
-import { config } from '../config.js';
+import { settings } from '../settings.js';
 import { badRequest, notFound } from '../lib/httpError.js';
 import { pickThumbnail, normalizeVideoItem, normalizePlaylistItem, normalizeChannelItem } from '../lib/media.js';
 import { extractChannelHandle } from '../lib/youtube.js';
@@ -34,8 +34,8 @@ const normalizeChannelHeader = (video = {}, channelSearch = {}) => ({
 const enrichChannelHeader = async (channelId) => {
   const query = channelId.startsWith('UC') ? channelId : `@${channelId.replace(/^@/, '')}`;
   const [searchResult, videosResult] = await Promise.allSettled([
-    fetchFromAny('/api/v1/search', { q: query, type: 'channel', sort: 'relevance', region: config.region, hl: config.hl }),
-    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/videos`, { hl: config.hl }),
+    fetchFromAny('/api/v1/search', { q: query, type: 'channel', sort: 'relevance', region: settings.region, hl: settings.hl }),
+    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/videos`, { hl: settings.hl }),
   ]);
 
   const searchItems = searchResult.status === 'fulfilled' ? searchResult.value.data : [];
@@ -54,9 +54,9 @@ export const fetchChannelPage = async (input, { continuation = '', sortBy = 'new
   if (!isNonEmptyString(channelId)) throw notFound('channel not found');
 
   const [videosRes, playlistsRes, relatedRes, headerRes] = await Promise.allSettled([
-    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/videos`, { continuation, sort_by: sortBy, hl: config.hl }),
-    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/playlists`, { hl: config.hl }),
-    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/channels`, { hl: config.hl }),
+    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/videos`, { continuation, sort_by: sortBy, hl: settings.hl }),
+    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/playlists`, { hl: settings.hl }),
+    fetchFromAny(`/api/v1/channels/${encodeURIComponent(channelId)}/channels`, { hl: settings.hl }),
     enrichChannelHeader(channelId),
   ]);
 

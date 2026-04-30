@@ -1,5 +1,6 @@
 import { config } from './src/config.js';
 import { createApp } from './src/app.js';
+import { settings } from './src/settings.js';
 
 const app = createApp();
 
@@ -13,7 +14,7 @@ process.on('uncaughtException', (error) => {
 });
 
 const server = app.listen(config.port, () => {
-  console.log(`${config.appName} running on ${config.port}`);
+  console.log(`${settings.appName} running on ${config.port}`);
 });
 
 process.on('SIGTERM', () => server.close(() => process.exit(0)));
