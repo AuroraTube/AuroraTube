@@ -1,6 +1,7 @@
 import { escapeHtml } from './format.js';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const BUFFER_TIMEOUT_MS = 12000;
 
 const normalizeUrl = (value, fallback = '') => {
   const text = String(value || '').trim();
@@ -25,11 +26,11 @@ export const playerMarkup = ({ videoId, poster, short = false, playback = {} }) 
   const sourceLabel = buildPlayerLabel(playback);
 
   return `
-    <section class="player-frame player-shell ${short ? 'player-frame-short player-shell-short' : ''}" data-player data-video-id="${escapeHtml(safeVideoId)}" data-stream-url="${escapeHtml(streamUrl)}" data-download-url="${escapeHtml(downloadUrl)}" data-final-url="${escapeHtml(finalUrl)}">
+    <section class="player-shell ${short ? 'player-shell-short' : ''}" data-player data-video-id="${escapeHtml(safeVideoId)}" data-stream-url="${escapeHtml(streamUrl)}" data-download-url="${escapeHtml(downloadUrl)}" data-final-url="${escapeHtml(finalUrl)}">
       <div class="player-stage">
         <video class="player-video" playsinline preload="metadata" controlslist="nodownload noplaybackrate"${poster ? ` poster="${escapeHtml(poster)}"` : ''} src="${escapeHtml(streamUrl)}"></video>
         <button class="player-center" type="button" data-player-play aria-label="再生">▶</button>
-        <div class="player-overlay"></div>
+        <div class="player-gradient"></div>
         <div class="player-badges">
           <span class="player-badge player-badge-direct">${escapeHtml(sourceLabel)}</span>
           ${warning ? `<span class="player-badge player-badge-warning">${escapeHtml(warning)}</span>` : ''}
@@ -80,10 +81,36 @@ const syncState = (root) => {
   if (!video || root.dataset.playerMounted === 'true') return;
   root.dataset.playerMounted = 'true';
 
+  let bufferingTimer = 0;
+
   const setStatus = (message = '', visible = false) => {
     if (!status) return;
     status.hidden = !visible;
     status.textContent = message;
+  };
+
+  const clearStatus = () => {
+    if (bufferingTimer) {
+      clearTimeout(bufferingTimer);
+      bufferingTimer = 0;
+    }
+    setStatus('', false);
+  };
+
+  const showBuffering = () => {
+    setStatus('読み込み中…', true);
+    if (bufferingTimer) clearTimeout(bufferingTimer);
+    bufferingTimer = window.setTimeout(() => {
+      setStatus('再生の読み込みが遅延しています', true);
+    }, BUFFER_TIMEOUT_MS);
+  };
+
+  const showError = () => {
+    if (bufferingTimer) {
+      clearTimeout(bufferingTimer);
+      bufferingTimer = 0;
+    }
+    setStatus('再生できませんでした', true);
   };
 
   const updateTime = () => {
@@ -124,7 +151,7 @@ const syncState = (root) => {
         video.pause();
       }
     } catch {
-      setStatus('再生を開始できませんでした', true);
+      showError();
     }
   };
 
@@ -172,11 +199,11 @@ const syncState = (root) => {
     }
   });
 
-  const clearStatus = () => setStatus('', false);
-  const showBuffering = () => setStatus('読み込み中…', true);
-  const showError = () => setStatus('再生できませんでした', true);
-
   video.addEventListener('loadedmetadata', () => {
+    clearStatus();
+    updateTime();
+  });
+  video.addEventListener('loadeddata', () => {
     clearStatus();
     updateTime();
   });

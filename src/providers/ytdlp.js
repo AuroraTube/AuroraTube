@@ -3,11 +3,23 @@ import { badRequest, unavailable } from '../lib/httpError.js';
 import { isNonEmptyString } from '../lib/strings.js';
 import { runCommand } from '../lib/process.js';
 
-const DEFAULT_COMMANDS = [
-  { command: 'yt-dlp', args: [] },
-  { command: 'python3', args: ['-m', 'yt_dlp'] },
-  { command: 'python', args: ['-m', 'yt_dlp'] },
-];
+const readCandidate = (value) => String(value || '').trim();
+
+const buildCommandList = () => {
+  const envCandidates = [
+    readCandidate(process.env.YTDLP_BIN),
+    readCandidate(process.env.YTDLP_COMMAND),
+  ].filter(Boolean).map((command) => ({ command, args: [] }));
+
+  return [
+    ...envCandidates,
+    { command: 'yt-dlp', args: [] },
+    { command: 'python3', args: ['-m', 'yt_dlp'] },
+    { command: 'python', args: ['-m', 'yt_dlp'] },
+  ];
+};
+
+const DEFAULT_COMMANDS = buildCommandList();
 
 const normalizeInput = (input) => {
   const value = String(input || '').trim();
@@ -17,7 +29,20 @@ const normalizeInput = (input) => {
 };
 
 const buildArgs = (input, { proxy } = {}) => {
-  const args = ['--no-warnings', '--no-playlist', '--skip-download', '--dump-single-json'];
+  const args = [
+    '--no-warnings',
+    '--no-playlist',
+    '--skip-download',
+    '--dump-single-json',
+    '--no-progress',
+    '--no-color',
+    '--socket-timeout',
+    String(Math.max(1, Math.ceil(Number(config.requestTimeoutMs || 8000) / 1000))),
+    '--extractor-retries',
+    '2',
+    '--fragment-retries',
+    '2',
+  ];
   if (isNonEmptyString(proxy)) {
     args.push('--proxy', proxy);
   }

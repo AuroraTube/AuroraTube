@@ -14,8 +14,11 @@ const state = {
   searchTimer: 0,
   renderToken: 0,
   renderAbort: null,
+  renderTimer: 0,
   copyTimer: 0,
 };
+
+const RENDER_TIMEOUT_MS = 15000;
 
 const locale = navigator.language || 'ja-JP';
 const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
@@ -164,6 +167,20 @@ const render = async () => {
   state.renderAbort = new AbortController();
   const { signal } = state.renderAbort;
 
+  clearTimeout(state.renderTimer);
+  state.renderTimer = window.setTimeout(() => {
+    if (renderToken !== state.renderToken) return;
+    state.renderAbort?.abort?.();
+    app.innerHTML = `
+      <div class="empty large error-state">
+        <strong>読み込みがタイムアウトしました</strong>
+        <span>通信先が応答しませんでした。</span>
+      </div>
+    `;
+    document.title = 'AuroraTube';
+    setLoadingState(false);
+  }, RENDER_TIMEOUT_MS);
+
   setLoadingState(true);
 
   const url = currentUrl();
@@ -214,12 +231,13 @@ const render = async () => {
           page = notFoundPage();
           break;
         }
-        const payload = await api.watch(id, signal);
-        if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
-          page = watchPage(payload);
+        const payload = await api.watch(id, signal).catch(() => null);
+        if (!payload?.video) {
+          page = notFoundPage();
           break;
         }
-        page = shortsPage(payload);
+        const lengthSeconds = Number(payload.video.lengthSeconds || 0);
+        page = lengthSeconds > 0 && lengthSeconds <= 60 ? shortsPage(payload) : watchPage(payload);
         break;
       }
       case 'channel': {
@@ -256,6 +274,7 @@ const render = async () => {
     `;
     document.title = 'AuroraTube';
   } finally {
+    clearTimeout(state.renderTimer);
     if (renderToken === state.renderToken) {
       setLoadingState(false);
       bindSearchForm();
