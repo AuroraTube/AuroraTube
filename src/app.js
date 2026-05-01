@@ -14,12 +14,16 @@ export const createApp = () => {
   app.use('/api', apiRouter);
   app.use(express.static(settings.publicDir, { extensions: ['html'], index: false, maxAge: '1h' }));
 
-  app.get(['/', '/trending', '/search', '/watch/:slug', '/shorts/:slug', '/channel/:slug'], (_req, res) => {
+  app.get(['/results', '/watch', '/shorts', '/shorts/:slug', '/channel/:slug'], (_req, res) => {
     res.sendFile(path.join(settings.publicDir, 'index.html'));
   });
 
-  app.use((_req, res) => {
-    res.status(404).json({ error: 'not found' });
+  app.get(/^\/@[^/]+$/, (_req, res) => {
+    res.sendFile(path.join(settings.publicDir, 'index.html'));
+  });
+
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(settings.publicDir, 'index.html'));
   });
 
   return app;

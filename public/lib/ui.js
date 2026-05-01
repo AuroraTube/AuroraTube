@@ -10,7 +10,7 @@ const ensureOverlay = () => {
     overlay.setAttribute('role', 'status');
     overlay.setAttribute('aria-live', 'polite');
     overlay.hidden = true;
-    overlay.innerHTML = '<div class="route-loading-card"><span class="route-loading-spinner" aria-hidden="true"></span><span class="route-loading-text">読み込み中…</span></div>';
+    overlay.innerHTML = '<div class="route-loading-card" aria-hidden="true"><span class="route-loading-spinner"></span><span class="route-loading-text">読み込み中…</span></div>';
     document.body.appendChild(overlay);
   }
   return overlay;

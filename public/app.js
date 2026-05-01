@@ -2,9 +2,10 @@ import { api } from './lib/api.js';
 import { navigate, onInternalLink, currentUrl } from './lib/router.js';
 import { escapeHtml } from './lib/format.js';
 import { commentCard, videoCard } from './lib/cards.js';
-import { homePage, searchPage, shortsPage, trendingPage, watchPage, channelPage, notFoundPage } from './pages.js';
+import { homePage, searchPage, shortsFeedPage, shortsPage, watchPage, channelPage, notFoundPage } from './pages.js';
 import { setLoadingState } from './lib/ui.js';
 import { bindPlayers } from './lib/player.js';
+import { buildResultsUrl, parseAppRoute } from './lib/routes.js';
 
 const app = document.getElementById('app');
 
@@ -19,18 +20,6 @@ const state = {
 const locale = navigator.language || 'ja-JP';
 const defaultRegion = locale.toLowerCase().startsWith('ja') ? 'JP' : 'US';
 
-const readSearchParams = () => currentUrl().searchParams;
-
-const buildSearchUrl = (params = {}) => {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined || value === null || value === '') continue;
-    search.set(key, String(value));
-  }
-  const query = search.toString();
-  return query ? `/search?${query}` : '/search';
-};
-
 const bindSearchForm = () => {
   const form = document.getElementById('search-form');
   if (!form) return;
@@ -41,7 +30,7 @@ const bindSearchForm = () => {
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    navigate(buildSearchUrl({ q: input.value.trim() }));
+    navigate(buildResultsUrl(input.value.trim()));
   });
 
   input.addEventListener('input', () => {
@@ -77,7 +66,7 @@ const bindSearchForm = () => {
     const button = event.target.closest?.('[data-suggestion]');
     if (!button) return;
     const value = button.getAttribute('data-suggestion') || '';
-    navigate(buildSearchUrl({ q: value }));
+    navigate(buildResultsUrl(value));
   });
 };
 
@@ -159,52 +148,51 @@ const render = async () => {
   state.renderAbort?.abort?.();
   state.renderAbort = new AbortController();
   const { signal } = state.renderAbort;
+  const route = parseAppRoute(currentUrl());
 
   beginRender();
 
-  const url = currentUrl();
-  const path = url.pathname;
-  const query = readSearchParams();
-
   try {
     let page;
-    if (path === '/' || path === '') {
+
+    if (route.route === 'home') {
       const trending = await api.trending('default', defaultRegion, signal);
       page = homePage(trending.items || [], defaultRegion);
-    } else if (path === '/trending') {
-      const trending = await api.trending('default', defaultRegion, signal);
-      page = trendingPage(trending.items || [], defaultRegion);
-    } else if (path === '/search') {
-      const q = String(query.get('q') || '').trim();
-      if (!q) {
+    } else if (route.route === 'results') {
+      if (!route.query) {
         const trending = await api.trending('default', defaultRegion, signal);
-        page = trendingPage(trending.items || [], defaultRegion);
+        page = homePage(trending.items || [], defaultRegion);
       } else {
-        const filters = {
-          type: query.get('type') || 'all',
-          sort: query.get('sort') || 'relevance',
-          date: query.get('date') || '',
-          duration: query.get('duration') || '',
-          features: query.get('features') || '',
-        };
-        const payload = await api.search(q, filters, signal);
-        page = searchPage(payload.query || q, payload.filters || filters, payload.items || []);
+        const payload = await api.search(route.query, route.filters, signal);
+        page = searchPage(payload.query || route.query, payload.filters || route.filters, payload.items || []);
       }
-    } else if (path.startsWith('/watch/')) {
-      const id = decodeURIComponent(path.replace('/watch/', ''));
-      page = watchPage(await api.watch(id, signal));
-    } else if (path.startsWith('/shorts/')) {
-      const id = decodeURIComponent(path.replace('/shorts/', ''));
-      const payload = await api.watch(id, signal);
-      if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
-        navigate(`/watch/${encodeURIComponent(id)}`, { replace: true });
-        return;
+    } else if (route.route === 'watch') {
+      if (!route.videoId) {
+        page = notFoundPage();
+      } else {
+        page = watchPage(await api.watch(route.videoId, { quality: route.quality }, signal));
       }
-      page = shortsPage(payload);
-    } else if (path.startsWith('/channel/')) {
-      const id = decodeURIComponent(path.replace('/channel/', ''));
-      const sortBy = String(query.get('sortBy') || 'newest');
-      page = channelPage({ ...(await api.channel(id, { sortBy }, signal)), sortBy });
+    } else if (route.route === 'shorts-feed') {
+      const trending = await api.trending('default', defaultRegion, signal);
+      page = shortsFeedPage(trending.items || [], defaultRegion);
+    } else if (route.route === 'shorts') {
+      if (!route.videoId) {
+        page = notFoundPage();
+      } else {
+        const payload = await api.watch(route.videoId, {}, signal);
+        if (!(Number(payload?.video?.lengthSeconds || 0) > 0 && Number(payload.video.lengthSeconds) <= 60)) {
+          navigate(`/watch?v=${encodeURIComponent(route.videoId)}`, { replace: true });
+          return;
+        }
+        page = shortsPage(payload);
+      }
+    } else if (route.route === 'channel') {
+      if (!route.channelId) {
+        page = notFoundPage();
+      } else {
+        const sortBy = String(route.sortBy || 'newest');
+        page = channelPage({ ...(await api.channel(route.channelId, { sortBy }, signal)), sortBy });
+      }
     } else {
       page = notFoundPage();
     }

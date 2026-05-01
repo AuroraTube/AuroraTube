@@ -43,7 +43,7 @@ apiRouter.get('/trending', asyncHandler(async (req, res) => {
 }));
 
 apiRouter.get('/watch/:id', asyncHandler(async (req, res) => {
-  const data = await fetchVideoPage(String(req.params.id || '').trim());
+  const data = await fetchVideoPage(String(req.params.id || '').trim(), { quality: String(req.query.quality || '').trim() });
   res.json(data);
 }));
 

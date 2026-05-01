@@ -29,7 +29,7 @@ const buildArgs = (input, { proxy } = {}) => {
 
 const formatCommand = (command, args = []) => `${command}${args.length ? ` ${args.join(' ')}` : ''}`;
 
-export const fetchYtDlpJson = async (input, { proxy = config.proxyUrl, timeoutMs = settings.requestTimeoutMs } = {}) => {
+export const fetchYtDlpJson = async (input, { proxy = config.proxy_url, timeoutMs = settings.requestTimeoutMs } = {}) => {
   if (!isNonEmptyString(String(input || '').trim())) {
     throw badRequest('video id or url required');
   }

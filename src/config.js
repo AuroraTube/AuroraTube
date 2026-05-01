@@ -5,5 +5,5 @@ const parsePositiveInt = (value, fallback) => {
 
 export const config = {
   port: parsePositiveInt(process.env.PORT, 3000),
-  proxyUrl: String(process.env.PROXY_URL || '').trim(),
+  proxy_url: String(process.env.PROXY_URL || '').trim(),
 };

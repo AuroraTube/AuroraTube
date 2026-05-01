@@ -712,3 +712,222 @@ body.is-loading { cursor: progress; }
     align-items: flex-start;
   }
 }
+
+.topbar {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+}
+.topbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.menu-button {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+}
+.menu-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.brand-mark {
+  width: 34px;
+  height: 24px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+}
+.brand-name {
+  font-size: 1.08rem;
+}
+.icon-chip,
+.sidebar-link,
+.chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--text);
+  background: transparent;
+}
+.icon-chip:hover,
+.sidebar-link:hover,
+.chip:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.icon-chip.active,
+.sidebar-link.active,
+.chip.active {
+  background: var(--accent-soft);
+  border-color: rgba(255, 0, 51, 0.28);
+  color: var(--text);
+}
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 0;
+  align-items: start;
+}
+.sidebar {
+  position: sticky;
+  top: calc(var(--topbar-height) + 1px);
+  height: calc(100vh - var(--topbar-height));
+  padding: 14px 12px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(24, 24, 24, 0.5), rgba(24, 24, 24, 0.12));
+  overflow: auto;
+}
+.sidebar-link {
+  width: 100%;
+  justify-content: flex-start;
+  margin-bottom: 6px;
+}
+.chip-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0 18px;
+}
+.chip {
+  border-color: var(--line);
+  background: var(--surface);
+}
+.viewer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+  gap: 18px;
+}
+.viewer-short {
+  grid-template-columns: minmax(0, 1fr) 292px;
+}
+.viewer > .player-shell,
+.viewer-head,
+.channel-strip,
+.description-card,
+.comments-section,
+.watch-related-column,
+.section-block {
+  grid-column: 1 / -1;
+}
+.watch-related-column {
+  display: none;
+}
+.viewer-head,
+.channel-strip,
+.description-card,
+.comments-section,
+.section-block {
+  max-width: 100%;
+}
+.watch-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.channel-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 16px 0 4px;
+}
+.player-quality-label {
+  min-width: 120px;
+}
+.player-quality-label .player-select {
+  max-width: 170px;
+}
+.route-loading {
+  pointer-events: none;
+}
+.route-loading-card {
+  pointer-events: none;
+}
+.channel-banner img,
+.card-thumb,
+.avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.channel-profile-avatar {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.channel-profile-meta,
+.channel-tabs,
+.page-head-meta {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.error-state span {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+@media (max-width: 1200px) {
+  .app-shell {
+    grid-template-columns: 84px minmax(0, 1fr);
+  }
+  .sidebar-link {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 980px) {
+  .topbar {
+    grid-template-columns: 1fr;
+    padding: 14px 16px;
+  }
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    display: none;
+  }
+  .search-form {
+    width: 100%;
+    margin-inline: 0;
+  }
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+  .viewer,
+  .viewer-short {
+    grid-template-columns: 1fr;
+  }
+  .player-row-main,
+  .player-row-secondary {
+    grid-template-columns: 1fr;
+  }
+  .player-frame-short .player-stage {
+    max-width: none;
+  }
+}
+
+.watch-related-column {
+  display: block;
+  grid-column: 2;
+  align-self: start;
+  position: sticky;
+  top: calc(var(--topbar-height) + 18px);
+}
+
+@media (max-width: 980px) {
+  .watch-related-column {
+    grid-column: 1;
+    position: static;
+  }
+}

@@ -6,12 +6,19 @@ import {
   textBlock,
   timeAgo,
 } from './format.js';
+import { buildChannelUrl, buildShortsUrl, buildWatchUrl } from './routes.js';
 import { thumbnailUrl } from './images.js';
 
-const bestThumb = (item) =>
-  item?.videoThumbnails?.slice?.().sort((a, b) => (Number(b.width || 0) * Number(b.height || 0)) - (Number(a.width || 0) * Number(a.height || 0)))[0]?.url || '';
+const bestThumb = (item) => {
+  const thumbs = Array.isArray(item?.videoThumbnails) ? item.videoThumbnails : [];
+  return [...thumbs].sort((a, b) => (Number(b.width || 0) * Number(b.height || 0)) - (Number(a.width || 0) * Number(a.height || 0)))[0]?.url || '';
+};
 
-const proxiedSrc = (url) => thumbnailUrl(url);
+const imageTag = (url, alt = '', className = '', fallback = '') => {
+  const resolved = thumbnailUrl(url);
+  if (!resolved) return fallback;
+  return `<img class="${className}" src="${escapeHtml(resolved)}" alt="${escapeHtml(alt)}" loading="lazy" referrerpolicy="no-referrer" />`;
+};
 
 export const isShortVideo = (item) => {
   const length = Number(item?.lengthSeconds || 0);
@@ -20,18 +27,14 @@ export const isShortVideo = (item) => {
 
 const videoHref = (item, variant = 'grid') => {
   if (!item?.videoId) return '#';
-  const id = encodeURIComponent(item.videoId);
-  if (variant === 'short' || isShortVideo(item)) {
-    return `/shorts/${id}`;
-  }
-  return `/watch/${id}`;
+  return variant === 'short' || isShortVideo(item) ? buildShortsUrl(item.videoId) : buildWatchUrl(item.videoId);
 };
 
 export const avatar = (thumbnails = [], fallback = '◉') => {
-  const thumb = thumbnails?.[0]?.url || '';
+  const thumb = Array.isArray(thumbnails) ? thumbnails[0]?.url || '' : '';
   return thumb
-    ? `<img src="${escapeHtml(proxiedSrc(thumb))}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
-    : `<span>${fallback}</span>`;
+    ? imageTag(thumb, '', 'avatar-image', `<span>${escapeHtml(fallback)}</span>`)
+    : `<span>${escapeHtml(fallback)}</span>`;
 };
 
 const metaLine = (item) => {
@@ -46,7 +49,7 @@ export const videoCard = (item, variant = 'grid') => {
   const live = item.liveNow ? '<span class="badge live">LIVE</span>' : '';
   const url = videoHref(item, variant);
   const short = variant === 'short' || isShortVideo(item);
-  const thumbImg = thumb ? `<img src="${escapeHtml(proxiedSrc(thumb))}" alt="${escapeHtml(item.title || '')}" loading="lazy" referrerpolicy="no-referrer" />` : '';
+  const thumbImg = thumb ? imageTag(thumb, item.title || '', 'card-thumb') : '';
   const meta = metaLine(item);
 
   return `
@@ -58,7 +61,7 @@ export const videoCard = (item, variant = 'grid') => {
       </a>
       <div class="video-meta">
         <a class="title ${variant === 'row' ? 'title-row' : ''}" href="${url}">${escapeHtml(item.title || '')}</a>
-        <a class="channel-link" href="${item.authorId ? `/channel/${encodeURIComponent(item.authorId)}` : '#'}">${escapeHtml(item.author || '')}</a>
+        <a class="channel-link" href="${item.authorId ? buildChannelUrl(item.authorId) : '#'}">${escapeHtml(item.author || '')}</a>
         ${meta ? `<div class="submeta">${meta}</div>` : ''}
         ${variant === 'row' && item.description ? `<p class="line-clamp">${escapeHtml(compactText(item.description || '', 180))}</p>` : ''}
       </div>
@@ -67,7 +70,7 @@ export const videoCard = (item, variant = 'grid') => {
 };
 
 export const channelCard = (item) => {
-  const link = item.authorId ? `/channel/${encodeURIComponent(item.authorId)}` : '#';
+  const link = item.authorId ? buildChannelUrl(item.authorId) : '#';
   return `
     <article class="channel-card">
       <a href="${link}" class="channel-card-head">
@@ -78,6 +81,25 @@ export const channelCard = (item) => {
         </span>
       </a>
       <p class="channel-description">${escapeHtml(compactText(item.description || '', 140))}</p>
+    </article>
+  `;
+};
+
+
+export const playlistCard = (item = {}) => {
+  const firstVideoId = item.videos?.[0]?.videoId || item.videoId || '';
+  const link = firstVideoId ? buildWatchUrl(firstVideoId) : '#';
+  const thumb = item.playlistThumbnail || item.videoThumbnails?.[0]?.url || '';
+  const cover = thumb ? imageTag(thumb, item.title || '', 'card-thumb') : '';
+  return `
+    <article class="playlist-card">
+      <a class="thumb" href="${link}">
+        ${cover}
+      </a>
+      <div class="video-meta">
+        <a class="title" href="${link}">${escapeHtml(item.title || '')}</a>
+        <div class="submeta">${escapeHtml(item.author || '')}${item.videoCount ? ` • ${formatCompactNumber(item.videoCount)} 本` : ''}</div>
+      </div>
     </article>
   `;
 };

@@ -84,7 +84,7 @@ const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
       '-loglevel',
       'error',
       '-nostdin',
-      ...(isNonEmptyString(config.proxyUrl) ? ['-http_proxy', config.proxyUrl] : []),
+      ...(isNonEmptyString(config.proxy_url) ? ['-http_proxy', config.proxy_url] : []),
       ...inputs.flatMap((input) => ['-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2', '-i', input]),
       ...outputOptions,
       '-f',
@@ -95,15 +95,6 @@ const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
     const child = spawn('ffmpeg', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: {
-        ...process.env,
-        ...(isNonEmptyString(config.proxyUrl) ? {
-          http_proxy: config.proxyUrl,
-          https_proxy: config.proxyUrl,
-          HTTP_PROXY: config.proxyUrl,
-          HTTPS_PROXY: config.proxyUrl,
-        } : {}),
-      },
     });
     let stderr = '';
     let settled = false;
@@ -136,7 +127,7 @@ const streamWithFfmpeg = (res, inputs, outputOptions = []) =>
     });
   });
 
-const getYtDlpVideo = async (videoId, { proxy = config.proxyUrl } = {}) => {
+const getYtDlpVideo = async (videoId, { proxy = config.proxy_url } = {}) => {
   const { data, command } = await fetchYtDlpJson(videoId, { proxy });
   const video = normalizeYtDlpVideo(data);
   return {
@@ -162,21 +153,22 @@ const getInvidiousVideo = async (videoId) => {
   };
 };
 
-const selectPlaybackForContext = (context, videoId) => {
+const selectPlaybackForContext = (context, videoId, quality = '') => {
   if (!context?.video) return null;
   return selectPlaybackPlan(context.video, {
     videoId,
+    quality,
     allowHls: context.provider?.kind === 'ytdlp',
   });
 };
 
-const resolveVideoContext = async (videoId) => {
+const resolveVideoContext = async (videoId, quality = '') => {
   const errors = [];
 
-  if (isNonEmptyString(config.proxyUrl)) {
+  if (isNonEmptyString(config.proxy_url)) {
     try {
-      const context = await getYtDlpVideo(videoId, { proxy: config.proxyUrl });
-      const playback = selectPlaybackForContext(context, videoId);
+      const context = await getYtDlpVideo(videoId, { proxy: config.proxy_url });
+      const playback = selectPlaybackForContext(context, videoId, quality);
       if (playback) {
         return {
           provider: context.provider,
@@ -194,7 +186,7 @@ const resolveVideoContext = async (videoId) => {
 
   try {
     const context = await getInvidiousVideo(videoId);
-    const playback = selectPlaybackForContext(context, videoId);
+    const playback = selectPlaybackForContext(context, videoId, quality);
     if (playback) {
       return {
         provider: context.provider,
@@ -211,7 +203,7 @@ const resolveVideoContext = async (videoId) => {
 
   try {
     const context = await getYtDlpVideo(videoId, { proxy: '' });
-    const playback = selectPlaybackForContext(context, videoId);
+    const playback = selectPlaybackForContext(context, videoId, quality);
     if (playback) {
       return {
         provider: context.provider,
@@ -244,7 +236,7 @@ const fetchCommentsPayload = async (videoId, continuation = '') => {
   };
 };
 
-const buildPlayerPayload = ({ video, provider, playback, comments, related }) => {
+const buildPlayerPayload = ({ video, provider, playback, comments, related, quality = '' }) => {
   const thumbnails = Array.isArray(video?.videoThumbnails) && video.videoThumbnails.length ? video.videoThumbnails : normalizeThumbnails(video?.thumbnails || []);
   const thumbnail = pickThumbnail(thumbnails);
   const captions = Array.isArray(video?.captions) ? video.captions : normalizeCaptionTracks(video?.subtitles || video?.automatic_captions || {});
@@ -266,9 +258,12 @@ const buildPlayerPayload = ({ video, provider, playback, comments, related }) =>
         kind: playback?.kind || 'unknown',
         streamUrl,
         finalUrl,
+        downloadUrl: String(playback?.downloadUrl || streamUrl || ''),
         proxy: Boolean(playback?.proxy),
         warning: String(playback?.warning || ''),
         source: String(playback?.source || ''),
+        variants: Array.isArray(playback?.variants) ? playback.variants : [],
+        selectedQuality: String(playback?.selectedQuality || quality || 'auto'),
       },
     },
     provider,
@@ -292,10 +287,11 @@ const contentDisposition = (title, download = false) => {
   return `${mode}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 };
 
-const sendPlayback = async (res, videoId, { download = false } = {}) => {
-  const context = await resolveVideoContext(videoId);
+const sendPlayback = async (res, videoId, { download = false, quality = '' } = {}) => {
+  const context = await resolveVideoContext(videoId, quality);
   const source = context.playback || selectPlaybackPlan(context.playbackVideo || context.video, {
     videoId,
+    quality,
     allowHls: Boolean(context.provider?.kind === 'ytdlp'),
   });
 
@@ -322,6 +318,13 @@ const sendPlayback = async (res, videoId, { download = false } = {}) => {
     return;
   }
 
+  if (source.kind === 'hls' && source.sourceUrl) {
+    if (!download) {
+      res.redirect(source.sourceUrl);
+      return;
+    }
+  }
+
   if ((source.kind === 'hls' || source.kind === 'dash-manifest') && source.sourceUrl) {
     res.status(200);
     res.setHeader('Content-Type', 'video/mp4');
@@ -346,11 +349,11 @@ const fetchInitialComments = async (videoId) => {
   }
 };
 
-export const fetchVideoPage = async (videoId) => {
+export const fetchVideoPage = async (videoId, { quality = '' } = {}) => {
   const safeVideoId = extractYouTubeVideoId(videoId) || String(videoId || '').trim();
   if (!safeVideoId) throw badRequest('video id required');
 
-  const context = await resolveVideoContext(safeVideoId);
+  const context = await resolveVideoContext(safeVideoId, quality);
   if (!isPlainObject(context.video)) throw unavailable('video response was not an object');
 
   const comments = await fetchInitialComments(safeVideoId);
@@ -359,6 +362,7 @@ export const fetchVideoPage = async (videoId) => {
     video: context.video,
     provider: context.provider,
     playback: context.playback,
+    quality,
     comments,
     related: context.related,
   });
@@ -370,10 +374,10 @@ export const fetchVideoComments = async (videoId, continuation = '') => {
   return fetchCommentsPayload(safeVideoId, continuation);
 };
 
-export const streamVideo = async (_req, res, videoId) => {
-  await sendPlayback(res, videoId, { download: false });
+export const streamVideo = async (req, res, videoId) => {
+  await sendPlayback(res, videoId, { download: false, quality: String(req?.query?.quality || '').trim() });
 };
 
-export const downloadVideo = async (_req, res, videoId) => {
-  await sendPlayback(res, videoId, { download: true });
+export const downloadVideo = async (req, res, videoId) => {
+  await sendPlayback(res, videoId, { download: true, quality: String(req?.query?.quality || '').trim() });
 };
