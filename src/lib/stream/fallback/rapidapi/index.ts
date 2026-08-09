@@ -1,0 +1,1 @@
+export { fetchRapidApiStream } from './fetch'
