@@ -1,6 +1,6 @@
 # AuroraTube
 
-Cloudflare Worker + React SPA: privacy-oriented YouTube frontend.
+Cloudflare Worker + React SPA: privacy-focused YouTube frontend.
 
 ## Stack
 
