@@ -32,7 +32,7 @@ export function CommentsSection({ videoId }: { videoId: string }) {
 
       {state.loading && !state.data ? (
         <div className="space-y-3 rounded-xl border border-line bg-white p-4" aria-busy="true">
-          {Array.from({ length: 3 }).map((_, i) => (
+          {Array.from({ length: 6 }).map((_, i) => (
             <CommentSkeleton key={i} />
           ))}
         </div>

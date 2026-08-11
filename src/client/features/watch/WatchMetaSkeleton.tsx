@@ -34,7 +34,7 @@ export function WatchMetaSkeleton() {
       {/* Comments */}
       <div className="space-y-3 rounded-xl border border-line bg-white p-4">
         <SkeletonBar className="h-4 w-24 bg-line/60" />
-        {Array.from({ length: 3 }).map((_, i) => (
+        {Array.from({ length: 6 }).map((_, i) => (
           <CommentSkeleton key={i} />
         ))}
       </div>

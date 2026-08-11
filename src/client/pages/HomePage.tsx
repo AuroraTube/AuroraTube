@@ -40,7 +40,7 @@ export function HomePage() {
           <AsyncView
             state={trending}
             onRetry={trending.reload}
-            loading={<VideoGridSkeleton count={8} />}
+            loading={<VideoGridSkeleton count={12} />}
             empty={<p className="text-sm text-muted">表示できる動画がありません。</p>}
           >
             {(data) => <VideoGrid videos={data.videos.slice(0, 12)} />}
