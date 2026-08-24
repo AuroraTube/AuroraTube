@@ -11,9 +11,9 @@ type Options = {
  * Spinner while the *primary* presentation is not yet playable.
  *
  * Rules (esp. DASH / split A/V):
- * - Once the video element can present frames (readyState ≥ HAVE_FUTURE_DATA)
- *   and is not in a true underrun, hide the spinner — even if the hidden
- *   audio track is still buffering.
+ * - Once the video element has enough buffered to likely play through
+ *   (readyState ≥ HAVE_ENOUGH_DATA) and is not in a true underrun, hide the
+ *   spinner — even if the hidden audio track is still buffering.
  * - While video is actively playing, never show loading for audio-only waits.
  * - `error` on video or audio ends the spinner (do not spin forever).
  * - Initial load / quality change (mediaKey) starts in loading state.
@@ -42,11 +42,11 @@ export function useMediaLoading({
       return
     }
 
-    const videoHasFuture = video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+    const videoHasEnough = video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA
     const videoHasCurrent = video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
     const videoPlaying = !video.paused && !video.ended
 
-    if (videoHasFuture) {
+    if (videoHasEnough) {
       videoEverReadyRef.current = true
     }
 
@@ -57,11 +57,11 @@ export function useMediaLoading({
       return
     }
 
-    if (videoHasFuture) {
+    if (videoHasEnough) {
       // Still waiting on first audio attach only before playback has started.
       if (usesSplitAudio && !audioErrorRef.current && !videoEverReadyRef.current) {
         const audio = audioRef.current
-        if (audio && audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+        if (audio && audio.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA) {
           setMediaLoading(true)
           return
         }
@@ -89,8 +89,8 @@ export function useMediaLoading({
       recompute()
     }
     const onWait = () => {
-      // Only treat as loading when the pipeline truly lacks future data.
-      if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+      // Only treat as loading when the pipeline truly lacks enough buffered data.
+      if (video.readyState < HTMLMediaElement.HAVE_ENOUGH_DATA) {
         setMediaLoading(true)
       }
       recompute()
